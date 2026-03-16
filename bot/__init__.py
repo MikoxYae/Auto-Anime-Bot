@@ -2,6 +2,7 @@ from os import path as ospath, mkdir, system, getenv
 from logging import INFO, ERROR, FileHandler, StreamHandler, basicConfig, getLogger
 from traceback import format_exc
 from asyncio import Queue, Lock
+import asyncio
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from pyrogram import Client
@@ -74,8 +75,9 @@ if not ospath.isdir("downloads/"):
     mkdir("downloads/")
 
 try:
+    bot_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(bot_loop)
     bot = Client(name="AutoAniAdvance", api_id=Var.API_ID, api_hash=Var.API_HASH, bot_token=Var.BOT_TOKEN, plugins=dict(root="bot/modules"), parse_mode=ParseMode.HTML)
-    bot_loop = bot.loop
     sch = AsyncIOScheduler(timezone="Asia/Kolkata", event_loop=bot_loop)
 except Exception as ee:
     LOGS.error(str(ee))
