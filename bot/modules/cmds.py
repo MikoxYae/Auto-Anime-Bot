@@ -34,6 +34,7 @@ private = filters.private
 
 pending_connect = {}   # uid -> {ani_id, ani_name}
 pending_torrent = {}   # uid -> True
+pending_pic     = {}   # uid -> {ani_id, ani_name}
 
 
 # ─── /start ───────────────────────────────────────────────────────────────────
@@ -77,6 +78,9 @@ async def help_cmd(client, message):
         "/connect <code>&lt;anime name&gt;</code> - Connect anime to a channel\n"
         "/disconnect <code>&lt;anilist id&gt;</code> - Remove a connection\n"
         "/connections - List all connections\n\n"
+        "<b>Custom Picture:</b>\n"
+        "/addpic <code>&lt;anime name&gt;</code> - Set custom pic for anime\n"
+        "/delpic <code>&lt;anilist id&gt;</code> - Remove custom pic\n\n"
         "<b>Database:</b>\n"
         "/delanime <code>&lt;anilist id&gt;</code> - Delete anime data from DB\n"
         "/users - Total bot users"
@@ -152,6 +156,89 @@ async def handle_torrent_doc(client, message):
     name = await TorDownloader.get_name_from_torfile(path) or message.document.file_name
     bot.loop.create_task(get_animes(name, path, force=True))
     await editMessage(stat, "<i>Torrent added to queue!</i>")
+
+
+# ─── /addpic ──────────────────────────────────────────────────────────────────
+
+@bot.on_message(command("addpic") & private & user(Var.ADMINS))
+async def addpic_cmd(client, message):
+    args = message.text.split(maxsplit=1)
+    if len(args) <= 1:
+        return await sendMessage(
+            message,
+            "Usage: /addpic <code>&lt;anime name&gt;</code>\n\n"
+            "Example: /addpic <code>Rooster Fighter</code>"
+        )
+
+    anime_name = args[1].strip()
+    stat = await sendMessage(message, f"<i>Searching AniList for:</i> <b>{anime_name}</b>...")
+
+    aniInfo = TextEditor(anime_name)
+    await aniInfo.load_anilist()
+    ani_id = aniInfo.adata.get('id')
+
+    if not ani_id:
+        return await editMessage(
+            stat,
+            f"Anime not found on AniList: <b>{anime_name}</b>\nTry a different name."
+        )
+
+    titles       = aniInfo.adata.get('title', {})
+    display_name = titles.get('english') or titles.get('romaji') or anime_name
+
+    pending_pic[message.from_user.id] = {
+        'ani_id':   ani_id,
+        'ani_name': display_name
+    }
+
+    await editMessage(
+        stat,
+        f"✅ <b>Anime Found:</b> <i>{display_name}</i>\n"
+        f"<b>AniList ID:</b> <code>{ani_id}</code>\n\n"
+        f"Ab <b>picture send karo</b> jo is anime ke liye set karni hai."
+    )
+
+
+# ─── Photo handler for /addpic ────────────────────────────────────────────────
+
+@bot.on_message(filters.photo & private & user(Var.ADMINS))
+async def handle_pic(client, message):
+    uid = message.from_user.id
+    if uid not in pending_pic:
+        return
+
+    info = pending_pic.pop(uid)
+    file_id = message.photo.file_id
+
+    await db.saveAnimePic(info['ani_id'], file_id)
+
+    await sendMessage(
+        message,
+        f"✅ <b>Picture Set Successfully!</b>\n\n"
+        f"• <b>Anime:</b> {info['ani_name']}\n"
+        f"• <b>AniList ID:</b> <code>{info['ani_id']}</code>\n\n"
+        f"<i>Ab se is anime ke liye yeh picture use hogi.</i>"
+    )
+
+
+# ─── /delpic ──────────────────────────────────────────────────────────────────
+
+@bot.on_message(command("delpic") & private & user(Var.ADMINS))
+async def delpic_cmd(client, message):
+    args = message.text.split(maxsplit=1)
+    if len(args) <= 1:
+        return await sendMessage(
+            message,
+            "Usage: /delpic <code>&lt;anilist id&gt;</code>"
+        )
+
+    try:
+        ani_id = int(args[1].strip())
+    except ValueError:
+        return await sendMessage(message, "Invalid AniList ID. Must be a number.")
+
+    await db.delAnimePic(ani_id)
+    await sendMessage(message, f"✅ Custom picture removed for <code>{ani_id}</code>.\n\n<i>AniList default poster use hoga ab se.</i>")
 
 
 # ─── /connect ─────────────────────────────────────────────────────────────────
