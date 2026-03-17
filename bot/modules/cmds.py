@@ -19,17 +19,20 @@ def command(cmd):
     return filters.command(cmd, prefixes="/")
 
 def user(uid):
+    if isinstance(uid, (list, tuple)):
+        return filters.user([int(x) for x in uid])
     if isinstance(uid, int):
         return filters.user(uid)
-    return filters.user([int(x) for x in str(uid).split()])
+    cleaned = str(uid).replace('[', '').replace(']', '').replace(',', ' ')
+    return filters.user([int(x.strip()) for x in cleaned.split() if x.strip()])
 
 private = filters.private
 
 
 # ─── Pending state dicts ──────────────────────────────────────────────────────
 
-pending_connect  = {}   # uid -> {ani_id, ani_name}
-pending_torrent  = {}   # uid -> True
+pending_connect = {}   # uid -> {ani_id, ani_name}
+pending_torrent = {}   # uid -> True
 
 
 # ─── /start ───────────────────────────────────────────────────────────────────
@@ -66,7 +69,7 @@ async def help_cmd(client, message):
         "/help - Show this message\n"
         "/status - Bot status\n\n"
         "<b>Anime:</b>\n"
-        "/fetch - Force fetch anime from RSS\n"
+        "/fetch - Toggle auto fetch on/off\n"
         "/addmagnet - Add magnet link manually\n"
         "/addtorrent - Add torrent file manually\n\n"
         "<b>Channel Connections:</b>\n"
@@ -84,10 +87,9 @@ async def help_cmd(client, message):
 @bot.on_message(command("status") & private & user(Var.ADMINS))
 async def status_cmd(client, message):
     fetch_status = "✅ Running" if ani_cache['fetch_animes'] else "🔴 Stopped"
-    ongoing = len(ani_cache['ongoing'])
-    completed = len(ani_cache['completed'])
-    total_users = await db.totalUsers()
-    connections = await db.getAllConnections()
+    ongoing      = len(ani_cache['ongoing'])
+    completed    = len(ani_cache['completed'])
+    connections  = await db.getAllConnections()
 
     await sendMessage(
         message,
@@ -95,7 +97,6 @@ async def status_cmd(client, message):
         f"• <b>Auto Fetch:</b> {fetch_status}\n"
         f"• <b>Ongoing Animes:</b> {ongoing}\n"
         f"• <b>Completed Animes:</b> {completed}\n"
-        f"• <b>Total Users:</b> {total_users}\n"
         f"• <b>Channel Connections:</b> {len(connections)}"
     )
 
@@ -171,13 +172,16 @@ async def connect_cmd(client, message):
     ani_id = aniInfo.adata.get('id')
 
     if not ani_id:
-        return await editMessage(stat, f"Anime not found on AniList: <b>{anime_name}</b>\nTry a different name.")
+        return await editMessage(
+            stat,
+            f"Anime not found on AniList: <b>{anime_name}</b>\nTry a different name."
+        )
 
-    titles = aniInfo.adata.get('title', {})
+    titles       = aniInfo.adata.get('title', {})
     display_name = titles.get('english') or titles.get('romaji') or anime_name
 
     pending_connect[message.from_user.id] = {
-        'ani_id': ani_id,
+        'ani_id':   ani_id,
         'ani_name': display_name
     }
 
@@ -209,12 +213,12 @@ async def handle_forward(client, message):
             "• The channel's forward privacy is not restricted"
         )
 
-    channel = message.forward_from_chat
-    channel_id = channel.id
+    channel      = message.forward_from_chat
+    channel_id   = channel.id
     channel_name = channel.title or "Unknown"
 
     try:
-        invite = await client.create_chat_invite_link(channel_id)
+        invite      = await client.create_chat_invite_link(channel_id)
         invite_link = invite.invite_link
     except Exception:
         invite_link = f"https://t.me/{channel.username}" if channel.username else ""
@@ -258,7 +262,10 @@ async def disconnect_cmd(client, message):
 
     conn = await db.getChannelConnection(ani_id)
     if not conn:
-        return await sendMessage(message, f"No connection found for AniList ID: <code>{ani_id}</code>")
+        return await sendMessage(
+            message,
+            f"No connection found for AniList ID: <code>{ani_id}</code>"
+        )
 
     await db.disconnectChannel(ani_id)
     await sendMessage(
@@ -277,7 +284,10 @@ async def connections_cmd(client, message):
     all_conn = await db.getAllConnections()
 
     if not all_conn:
-        return await sendMessage(message, "No channel connections found.\n\nUse /connect to add one.")
+        return await sendMessage(
+            message,
+            "No channel connections found.\n\nUse /connect to add one."
+        )
 
     text = f"<b>Channel Connections ({len(all_conn)}):</b>\n\n"
     for i, conn in enumerate(all_conn, 1):
@@ -306,10 +316,8 @@ async def delanime_cmd(client, message):
         return await sendMessage(message, "Invalid AniList ID. Must be a number.")
 
     await db.delAnime(ani_id)
-    if ani_id in ani_cache['completed']:
-        ani_cache['completed'].discard(ani_id)
-    if ani_id in ani_cache['ongoing']:
-        ani_cache['ongoing'].discard(ani_id)
+    ani_cache['completed'].discard(ani_id)
+    ani_cache['ongoing'].discard(ani_id)
 
     await sendMessage(message, f"✅ Anime <code>{ani_id}</code> deleted from database.")
 
@@ -318,5 +326,4 @@ async def delanime_cmd(client, message):
 
 @bot.on_message(command("users") & private & user(Var.ADMINS))
 async def users_cmd(client, message):
-    total = await db.totalUsers()
-    await sendMessage(message, f"<b>Total Users:</b> <code>{total}</code>")
+    await sendMessage(message, "This feature requires user tracking setup.")
