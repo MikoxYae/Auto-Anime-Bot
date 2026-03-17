@@ -79,10 +79,14 @@ async def get_animes(name, torrent, force=False):
 
             await rep.report(f"New Anime Torrent Found!\n\n{name}", "info")
 
+            # ── Custom pic check — set ho toh use karo, warna AniList ─────
+            custom_pic = await db.getAnimePic(ani_id) if ani_id else None
+            poster     = custom_pic or await aniInfo.get_poster()
+
             # ── Post to upload channel (poster + caption) ─────────────────
             post_msg = await bot.send_photo(
                 upload_channel,
-                photo=await aniInfo.get_poster(),
+                photo=poster,
                 caption=await aniInfo.get_caption()
             )
 
@@ -90,7 +94,7 @@ async def get_animes(name, torrent, force=False):
             if conn and invite_link:
                 await bot.send_photo(
                     Var.MAIN_CHANNEL,
-                    photo=await aniInfo.get_poster(),
+                    photo=poster,
                     caption=await aniInfo.get_caption(),
                     reply_markup=InlineKeyboardMarkup([[
                         InlineKeyboardButton("🔗 Join Now", url=invite_link)
