@@ -13,7 +13,7 @@ from .reporter import rep
 THUMB_PATH = "thumb.jpg"
 
 class TgUploader:
-    def __init__(self, message):
+    def __init__(self, message, chat_id=None):
         self.cancelled = False
         self.message = message
         self.__name = ""
@@ -21,6 +21,7 @@ class TgUploader:
         self.__client = bot
         self.__start = time()
         self.__updater = time()
+        self.__chat_id = chat_id or Var.FILE_STORE
 
     async def upload(self, path, qual):
         self.__name = ospath.basename(path)
@@ -29,7 +30,7 @@ class TgUploader:
         try:
             if Var.AS_DOC:
                 return await self.__client.send_document(
-                    chat_id=Var.FILE_STORE,
+                    chat_id=self.__chat_id,
                     document=path,
                     thumb=thumb,
                     caption=f"<i>{self.__name}</i>",
@@ -38,7 +39,7 @@ class TgUploader:
                 )
             else:
                 return await self.__client.send_video(
-                    chat_id=Var.FILE_STORE,
+                    chat_id=self.__chat_id,
                     video=path,
                     thumb=thumb,
                     caption=f"<i>{self.__name}</i>",
