@@ -1,4 +1,4 @@
-from re import findall 
+from re import findall
 from math import floor
 from time import time
 from os import path as ospath
@@ -8,7 +8,7 @@ from asyncio import sleep as asleep, gather, create_subprocess_shell, create_tas
 from asyncio.subprocess import PIPE
 
 from bot import Var, bot_loop, ffpids_cache, LOGS
-from .func_utils import mediainfo, convertBytes, convertTime, sendMessage, editMessage
+from .func_utils import mediainfo, convertBytes, convertTime, editMessage
 from .reporter import rep
 
 ffargs = {
@@ -19,7 +19,7 @@ ffargs = {
 }
 
 class FFEncoder:
-    def __init__(self, message, path, name, qual):
+    def __init__(self, message, path, name, qual, turn_index=0, total_quals=1):
         self.__proc = None
         self.is_cancelled = False
         self.message = message
@@ -30,39 +30,48 @@ class FFEncoder:
         self.out_path = ospath.join("encode", name)
         self.__prog_file = f'prog_{self.__qual}.txt'
         self.__start_time = time()
+        self.__turn_index = turn_index
+        self.__total_quals = total_quals
+
+    def __is_my_turn(self):
+        return floor(time() / 20) % self.__total_quals == self.__turn_index
 
     async def progress(self):
         self.__total_time = await mediainfo(self.dl_path, get_duration=True)
         if isinstance(self.__total_time, str):
             self.__total_time = 1.0
         while not (self.__proc is None or self.is_cancelled):
-            async with aiopen(self.__prog_file, 'r+') as p:
-                text = await p.read()
-            if text:
-                time_done = floor(int(t[-1]) / 1000000) if (t := findall("out_time_ms=(\d+)", text)) else 1
-                ensize = int(s[-1]) if (s := findall(r"total_size=(\d+)", text)) else 0
+            if self.__is_my_turn():
+                try:
+                    async with aiopen(self.__prog_file, 'r+') as p:
+                        text = await p.read()
+                    if text:
+                        time_done = floor(int(t[-1]) / 1000000) if (t := findall(r"out_time_ms=(\d+)", text)) else 1
+                        ensize = int(s[-1]) if (s := findall(r"total_size=(\d+)", text)) else 0
 
-                diff = time() - self.__start_time
-                speed = ensize / diff
-                percent = round((time_done / self.__total_time) * 100, 2)
-                tsize = ensize / (max(percent, 0.01) / 100)
-                eta = (tsize - ensize) / max(speed, 0.01)
+                        diff = time() - self.__start_time
+                        speed = ensize / diff if diff > 0 else 0
+                        percent = round((time_done / self.__total_time) * 100, 2)
+                        tsize = ensize / (max(percent, 0.01) / 100)
+                        eta = (tsize - ensize) / max(speed, 0.01)
 
-                bar = floor(percent / 8) * "█" + (12 - floor(percent / 8)) * "▒"
+                        bar = floor(percent / 8) * "█" + (12 - floor(percent / 8)) * "▒"
 
-                progress_str = f"""<blockquote>‣ <b>Anime Name :</b> <b><i>{self.__name}</i></b></blockquote>
+                        progress_str = f"""<blockquote>‣ <b>Anime Name :</b> <b><i>{self.__name}</i></b></blockquote>
 <blockquote>‣ <b>Quality :</b> <i>{self.__qual}p</i> | <b>Status :</b> <i>Encoding</i>
     <code>[{bar}]</code> {percent}%</blockquote>
 <blockquote>   ‣ <b>Size :</b> {convertBytes(ensize)} out of ~ {convertBytes(tsize)}
     ‣ <b>Speed :</b> {convertBytes(speed)}/s
     ‣ <b>Time Took :</b> {convertTime(diff)}
     ‣ <b>Time Left :</b> {convertTime(eta)}</blockquote>
-<blockquote>‣ <b>Encoding:</b> <code>{self.__qual}p</code> | <b>Total Qualities:</b> <code>{len(Var.QUALS)}</code></blockquote>"""
+<blockquote>‣ <b>Encoding:</b> <code>{self.__qual}p</code> | <b>Slot:</b> <code>{self.__turn_index + 1}/{self.__total_quals}</code></blockquote>"""
 
-                await editMessage(self.message, progress_str)
-                if (prog := findall(r"progress=(\w+)", text)) and prog[-1] == 'end':
-                    break
-            await asleep(25)
+                        await editMessage(self.message, progress_str)
+                        if (prog := findall(r"progress=(\w+)", text)) and prog[-1] == 'end':
+                            break
+                except Exception:
+                    pass
+            await asleep(8)
 
     async def start_encode(self):
         if ospath.exists(self.__prog_file):
@@ -73,7 +82,6 @@ class FFEncoder:
             pass
 
         out_npath = ospath.join("encode", f"ffanimeadvout_{self.__qual}.mkv")
-
         ffcode = ffargs[self.__qual].format(self.dl_path, self.__prog_file, out_npath)
 
         LOGS.info(f'FFCode [{self.__qual}p]: {ffcode}')
