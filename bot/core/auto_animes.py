@@ -172,19 +172,23 @@ async def get_animes(name, torrent, force=False):
                     await asleep(1.5)
 
                     try:
-                        msg = await TgUploader(stat_msg, chat_id=upload_channel).upload(out_path, qual)
+                        # ── Hamesha FILE_STORE mein upload ────────────────
+                        msg = await TgUploader(stat_msg, chat_id=Var.FILE_STORE).upload(out_path, qual)
                     except Exception as e:
                         await rep.report(f"Upload Error [{qual}p]: {e}", "error")
                         continue
 
                     await rep.report(f"Successfully Uploaded {qual}p!", "info")
-                    msg_id = msg.id
 
+                    store_msg_id = msg.id
+
+                    # ── Button link FILE_STORE msg_id se ─────────────────
                     link = (
                         f"https://telegram.me/{(await bot.get_me()).username}"
-                        f"?start={await encode('get-' + str(msg_id * abs(Var.FILE_STORE)))}"
+                        f"?start=get-{await encode(str(store_msg_id * abs(Var.FILE_STORE)))}"
                     )
 
+                    # ── Button connected/main channel ke post par update ──
                     if post_msg:
                         btn_label = (
                             f"{btn_formatter.get(qual, qual + 'p')} "
@@ -202,7 +206,7 @@ async def get_animes(name, torrent, force=False):
                         )
 
                     await db.saveAnime(ani_id, ep_no, qual, post_id)
-                    bot_loop.create_task(extra_utils(msg_id, upload_channel))
+                    bot_loop.create_task(extra_utils(store_msg_id, Var.FILE_STORE))
 
             await editMessage(
                 stat_msg,
