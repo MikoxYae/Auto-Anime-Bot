@@ -1,10 +1,9 @@
 from asyncio import gather, create_task, sleep as asleep, Event
 from asyncio.subprocess import PIPE
-from os import path as ospath, system
+from os import path as ospath
 from aiofiles import open as aiopen
 from aiofiles.os import remove as aioremove
 from traceback import format_exc
-from base64 import urlsafe_b64encode
 from time import time
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -78,13 +77,17 @@ async def get_animes(name, torrent, force=False):
 
             await ffLock.acquire()
             btns = []
+            total_quals = len(Var.QUALS)
 
-            # --- Parallel Encoding ---
-            async def encode_one(qual):
+            async def encode_one(qual, turn_index):
                 filename = await aniInfo.get_upname(qual)
                 await rep.report(f"Starting Encode [{qual}p]...", "info")
                 try:
-                    out_path = await FFEncoder(stat_msg, dl, filename, qual).start_encode()
+                    out_path = await FFEncoder(
+                        stat_msg, dl, filename, qual,
+                        turn_index=turn_index,
+                        total_quals=total_quals
+                    ).start_encode()
                     return qual, filename, out_path
                 except Exception as e:
                     await rep.report(f"Encode Error [{qual}p]: {e}", "error")
@@ -93,15 +96,14 @@ async def get_animes(name, torrent, force=False):
             await editMessage(
                 stat_msg,
                 f"‣ <b>Anime Name :</b> <b><i>{name}</i></b>\n\n"
-                f"<i>Encoding {len(Var.QUALS)} Qualities Simultaneously...</i>\n"
-                f"<b>Qualities:</b> <code>{' | '.join(q+'p' for q in Var.QUALS)}</code>"
+                f"<i>Encoding {total_quals} Qualities Simultaneously...</i>\n"
+                f"<b>Qualities:</b> <code>{' | '.join(q + 'p' for q in Var.QUALS)}</code>\n"
+                f"<i>(Progress rotates every 20s per quality)</i>"
             )
 
-            encode_results = await gather(*[encode_one(qual) for qual in Var.QUALS])
-
+            encode_results = await gather(*[encode_one(qual, i) for i, qual in enumerate(Var.QUALS)])
             await rep.report("All Qualities Encoded! Starting Uploads...", "info")
 
-            # --- Sequential Upload ---
             all_failed = True
             for result in encode_results:
                 if not result:
@@ -122,7 +124,6 @@ async def get_animes(name, torrent, force=False):
                     continue
 
                 await rep.report(f"Successfully Uploaded {qual}p!", "info")
-
                 msg_id = msg.id
                 link = f"https://telegram.me/{(await bot.get_me()).username}?start={await encode('get-' + str(msg_id * abs(Var.FILE_STORE)))}"
 
@@ -155,9 +156,6 @@ async def get_animes(name, torrent, force=False):
 
 async def extra_utils(msg_id):
     msg = await bot.get_messages(Var.FILE_STORE, message_ids=msg_id)
-
     if Var.BACKUP_CHANNEL != 0:
         for chat_id in Var.BACKUP_CHANNEL.split():
             await msg.copy(int(chat_id))
-
-    # MediaInfo, ScreenShots, Sample Video ( Add-ons Features )
