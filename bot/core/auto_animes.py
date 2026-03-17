@@ -58,11 +58,22 @@ async def get_animes(name, torrent, force=False):
                 return
 
             # ── Check for connected channel ───────────────────────────────
-            conn = await db.getChannelConnection(ani_id)
+            conn = await db.getChannelConnection(ani_id) if ani_id else None
+
+            # Agar ani_id nahi mila, name se fuzzy match karo
+            if not conn:
+                all_conns = await db.getAllConnections()
+                for c in all_conns:
+                    stored = c.get('ani_name', '').lower()
+                    if stored and stored in name.lower():
+                        conn = c
+                        LOGS.info(f"Matched connection by name: {stored}")
+                        break
+
             if conn:
                 upload_channel = int(conn['channel_id'])
                 invite_link    = conn.get('invite_link', '')
-                LOGS.info(f"Connected channel found for [{name}] → {conn['channel_name']}")
+                LOGS.info(f"Connected channel found → {conn['channel_name']}")
             else:
                 upload_channel = Var.MAIN_CHANNEL
                 invite_link    = None
@@ -142,7 +153,7 @@ async def get_animes(name, torrent, force=False):
 
                 await upload_queue.put((qual, filename, out_path))
 
-            # ── Upload worker — runs alongside encoders ────────────────────
+            # ── Upload worker ─────────────────────────────────────────────
             async def upload_worker():
                 for _ in range(total_quals):
                     qual, filename, out_path = await upload_queue.get()
