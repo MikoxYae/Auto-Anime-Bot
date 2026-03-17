@@ -1,192 +1,322 @@
 from asyncio import sleep as asleep
-from urllib.parse import unquote, parse_qs, urlparse
-from pyrogram.filters import command, private, user, document
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from pyrogram.errors import FloodWait, MessageNotModified
+from traceback import format_exc
 
-from bot import bot, bot_loop, Var, ani_cache
+from pyrogram import filters
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+from bot import bot, Var, ani_cache, LOGS
 from bot.core.database import db
-from bot.core.func_utils import decode, is_fsubbed, get_fsubs, editMessage, sendMessage, new_task, convertTime, getfeed
-from bot.core.auto_animes import get_animes
+from bot.core.func_utils import editMessage, sendMessage, encode, decode
+from bot.core.text_utils import TextEditor
 from bot.core.tordownload import TorDownloader
+from bot.core.auto_animes import get_animes
 from bot.core.reporter import rep
 
-pending_torrent = {}
 
-@bot.on_message(command('start') & private)
-@new_task
-async def start_msg(client, message):
-    uid = message.from_user.id
-    from_user = message.from_user
-    txtargs = message.text.split()
-    temp = await sendMessage(message, "<i>Connecting..</i>")
-    if not await is_fsubbed(uid):
-        txt, btns = await get_fsubs(uid, txtargs)
-        return await editMessage(temp, txt, InlineKeyboardMarkup(btns))
-    if len(txtargs) <= 1:
-        await temp.delete()
-        btns = []
-        for elem in Var.START_BUTTONS.split():
-            try:
-                bt, link = elem.split('|', maxsplit=1)
-            except:
-                continue
-            if len(btns) != 0 and len(btns[-1]) == 1:
-                btns[-1].insert(1, InlineKeyboardButton(bt, url=link))
-            else:
-                btns.append([InlineKeyboardButton(bt, url=link)])
-        smsg = Var.START_MSG.format(
-            first_name=from_user.first_name,
-            last_name=from_user.first_name,
-            mention=from_user.mention,
-            user_id=from_user.id
-        )
-        if Var.START_PHOTO:
-            await message.reply_photo(
-                photo=Var.START_PHOTO,
-                caption=smsg,
-                reply_markup=InlineKeyboardMarkup(btns) if len(btns) != 0 else None
-            )
-        else:
-            await sendMessage(message, smsg, InlineKeyboardMarkup(btns) if len(btns) != 0 else None)
-        return
-    try:
-        arg = (await decode(txtargs[1])).split('-')
-    except Exception as e:
-        await rep.report(f"User : {uid} | Error : {str(e)}", "error")
-        await editMessage(temp, "<b>Input Link Code Decode Failed !</b>")
-        return
-    if len(arg) == 2 and arg[0] == 'get':
+# ─── Filter Helpers ───────────────────────────────────────────────────────────
+
+def command(cmd):
+    return filters.command(cmd, prefixes="/")
+
+def user(uid):
+    if isinstance(uid, int):
+        return filters.user(uid)
+    return filters.user([int(x) for x in str(uid).split()])
+
+private = filters.private
+
+
+# ─── Pending state dicts ──────────────────────────────────────────────────────
+
+pending_connect  = {}   # uid -> {ani_id, ani_name}
+pending_torrent  = {}   # uid -> True
+
+
+# ─── /start ───────────────────────────────────────────────────────────────────
+
+@bot.on_message(command("start") & private)
+async def start_cmd(client, message):
+    args = message.text.split()
+    if len(args) > 1 and args[1].startswith("get-"):
         try:
-            fid = int(int(arg[1]) / abs(int(Var.FILE_STORE)))
-        except Exception as e:
-            await rep.report(f"User : {uid} | Error : {str(e)}", "error")
-            await editMessage(temp, "<b>Input Link Code is Invalid !</b>")
-            return
-        try:
-            msg = await client.get_messages(Var.FILE_STORE, message_ids=fid)
-            if msg.empty:
-                return await editMessage(temp, "<b>File Not Found !</b>")
-            nmsg = await msg.copy(message.chat.id, reply_markup=None)
-            await temp.delete()
-            if Var.AUTO_DEL:
-                async def auto_del(msg, timer):
-                    await asleep(timer)
-                    await msg.delete()
-                await sendMessage(message, f'<i>File will be Auto Deleted in {convertTime(Var.DEL_TIMER)}, Forward to Saved Messages Now..</i>')
-                bot_loop.create_task(auto_del(nmsg, Var.DEL_TIMER))
-        except Exception as e:
-            await rep.report(f"User : {uid} | Error : {str(e)}", "error")
-            await editMessage(temp, "<b>File Not Found !</b>")
+            data = await decode(args[1][4:])
+            msg_id = int(int(data) / abs(Var.FILE_STORE))
+            msg = await client.get_messages(Var.FILE_STORE, message_ids=msg_id)
+            await msg.copy(message.chat.id)
+        except Exception:
+            await sendMessage(message, "File not found or expired.")
     else:
-        await editMessage(temp, "<b>Input Link is Invalid for Usage !</b>")
+        await sendMessage(
+            message,
+            f"<b>Hello {message.from_user.mention}!</b>\n\nI am <b>Auto Anime Bot</b>.\n"
+            f"I automatically fetch, encode and upload anime episodes.\n\n"
+            f"<i>Powered by @Matiz_Tech</i>"
+        )
 
 
-@bot.on_message(command('pause') & private & user(Var.ADMINS))
-async def pause_fetch(client, message):
-    ani_cache['fetch_animes'] = False
-    await sendMessage(message, "`Successfully Paused Fetching Animes...`")
+# ─── /help ────────────────────────────────────────────────────────────────────
+
+@bot.on_message(command("help") & private & user(Var.ADMINS))
+async def help_cmd(client, message):
+    await sendMessage(
+        message,
+        "<b>Available Commands:</b>\n\n"
+        "<b>General:</b>\n"
+        "/start - Start the bot\n"
+        "/help - Show this message\n"
+        "/status - Bot status\n\n"
+        "<b>Anime:</b>\n"
+        "/fetch - Force fetch anime from RSS\n"
+        "/addmagnet - Add magnet link manually\n"
+        "/addtorrent - Add torrent file manually\n\n"
+        "<b>Channel Connections:</b>\n"
+        "/connect <code>&lt;anime name&gt;</code> - Connect anime to a channel\n"
+        "/disconnect <code>&lt;anilist id&gt;</code> - Remove a connection\n"
+        "/connections - List all connections\n\n"
+        "<b>Database:</b>\n"
+        "/delanime <code>&lt;anilist id&gt;</code> - Delete anime data from DB\n"
+        "/users - Total bot users"
+    )
 
 
-@bot.on_message(command('resume') & private & user(Var.ADMINS))
-async def resume_fetch(client, message):
-    ani_cache['fetch_animes'] = True
-    await sendMessage(message, "`Successfully Resumed Fetching Animes...`")
+# ─── /status ──────────────────────────────────────────────────────────────────
 
-
-@bot.on_message(command('log') & private & user(Var.ADMINS))
-@new_task
-async def _log(client, message):
-    await message.reply_document("log.txt", quote=True)
-
-
-@bot.on_message(command('addlink') & private & user(Var.ADMINS))
-@new_task
-async def add_link(client, message):
-    args = message.text.split()
-    if len(args) <= 1:
-        return await sendMessage(message, "<b>No Link Found to Add</b>")
-    Var.RSS_ITEMS.append(args[1])
-    await sendMessage(message, f"`Global Link Added Successfully!`\n\n    • **All Link(s) :** {', '.join(Var.RSS_ITEMS)}")
-
-
-@bot.on_message(command('addtask') & private & user(Var.ADMINS))
-@new_task
-async def add_task(client, message):
-    args = message.text.split()
-    if len(args) <= 1:
-        return await sendMessage(message, "<b>No Task Found to Add</b>")
-    index = int(args[2]) if len(args) > 2 and args[2].isdigit() else 0
-    if not (taskInfo := await getfeed(args[1], index)):
-        return await sendMessage(message, "<b>No Task Found to Add for the Provided Link</b>")
-    bot_loop.create_task(get_animes(taskInfo.title, taskInfo.link, True))
-    await sendMessage(message, f"<i><b>Task Added Successfully!</b></i>\n\n    • <b>Task Name :</b> {taskInfo.title}\n    • <b>Task Link :</b> {args[1]}")
-
-
-@bot.on_message(command('addmagnet') & private & user(Var.ADMINS))
-@new_task
-async def add_magnet(client, message):
-    args = message.text.split(maxsplit=1)
-    if len(args) <= 1 or not args[1].startswith("magnet:"):
-        return await sendMessage(message, "<b>Please provide a valid magnet link!</b>\n\n<i>Usage: /addmagnet magnet:?xt=...</i>")
-
-    magnet = args[1].strip()
-
-    try:
-        parsed = urlparse(magnet)
-        dn = parse_qs(parsed.query).get('dn', [''])[0]
-        name = unquote(dn).strip()
-    except Exception:
-        name = ""
-
-    if not name:
-        return await sendMessage(message, "<b>Could not extract anime name from magnet link!</b>")
+@bot.on_message(command("status") & private & user(Var.ADMINS))
+async def status_cmd(client, message):
+    fetch_status = "✅ Running" if ani_cache['fetch_animes'] else "🔴 Stopped"
+    ongoing = len(ani_cache['ongoing'])
+    completed = len(ani_cache['completed'])
+    total_users = await db.totalUsers()
+    connections = await db.getAllConnections()
 
     await sendMessage(
         message,
-        f"<i><b>Magnet Task Added!</b></i>\n\n"
-        f"    • <b>Anime Name :</b> <code>{name}</code>\n"
-        f"    • <b>Processing...</b>"
+        f"<b>Bot Status:</b>\n\n"
+        f"• <b>Auto Fetch:</b> {fetch_status}\n"
+        f"• <b>Ongoing Animes:</b> {ongoing}\n"
+        f"• <b>Completed Animes:</b> {completed}\n"
+        f"• <b>Total Users:</b> {total_users}\n"
+        f"• <b>Channel Connections:</b> {len(connections)}"
     )
-    bot_loop.create_task(get_animes(name, magnet, True))
 
 
-@bot.on_message(command('addtorrent') & private & user(Var.ADMINS))
-async def add_torrent_cmd(client, message):
+# ─── /fetch ───────────────────────────────────────────────────────────────────
+
+@bot.on_message(command("fetch") & private & user(Var.ADMINS))
+async def fetch_cmd(client, message):
+    ani_cache['fetch_animes'] = not ani_cache['fetch_animes']
+    state = "✅ Enabled" if ani_cache['fetch_animes'] else "🔴 Disabled"
+    await sendMessage(message, f"Auto Fetch: <b>{state}</b>")
+
+
+# ─── /addmagnet ───────────────────────────────────────────────────────────────
+
+@bot.on_message(command("addmagnet") & private & user(Var.ADMINS))
+async def addmagnet_cmd(client, message):
+    args = message.text.split(maxsplit=1)
+    if len(args) <= 1:
+        return await sendMessage(message, "Usage: /addmagnet <code>&lt;magnet link&gt;</code>")
+
+    magnet = args[1].strip()
+    if not magnet.startswith("magnet:"):
+        return await sendMessage(message, "Invalid magnet link.")
+
+    stat = await sendMessage(message, "<i>Processing magnet link...</i>")
+    bot.loop.create_task(get_animes(magnet.split("dn=")[-1].split("&")[0], magnet, force=True))
+    await editMessage(stat, "<i>Magnet added to queue!</i>")
+
+
+# ─── /addtorrent ──────────────────────────────────────────────────────────────
+
+@bot.on_message(command("addtorrent") & private & user(Var.ADMINS))
+async def addtorrent_cmd(client, message):
+    pending_torrent[message.from_user.id] = True
+    await sendMessage(message, "Send the <b>.torrent</b> file now.")
+
+
+@bot.on_message(filters.document & private & user(Var.ADMINS))
+async def handle_torrent_doc(client, message):
     uid = message.from_user.id
-    pending_torrent[uid] = True
-    await sendMessage(message, "<b>Send your .torrent file now:</b>")
-
-
-@bot.on_message(document & private & user(Var.ADMINS))
-@new_task
-async def handle_torrent_file(client, message):
-    uid = message.from_user.id
-    if not pending_torrent.get(uid):
+    if uid not in pending_torrent:
         return
-    pending_torrent.pop(uid, None)
+    pending_torrent.pop(uid)
 
-    doc = message.document
-    if not doc.file_name.endswith(".torrent"):
-        return await sendMessage(message, "<b>Invalid file! Please send a .torrent file.</b>")
+    if not message.document.file_name.endswith(".torrent"):
+        return await sendMessage(message, "Invalid file. Send a <b>.torrent</b> file.")
 
-    temp = await sendMessage(message, "<i>Downloading torrent file...</i>")
-    torrent_path = f"torrents/{doc.file_name}"
+    stat = await sendMessage(message, "<i>Processing torrent file...</i>")
+    path = await message.download(f"torrents/{message.document.file_name}")
+    name = await TorDownloader.get_name_from_torfile(path) or message.document.file_name
+    bot.loop.create_task(get_animes(name, path, force=True))
+    await editMessage(stat, "<i>Torrent added to queue!</i>")
 
-    try:
-        await client.download_media(message, file_name=torrent_path)
-    except Exception as e:
-        await rep.report(str(e), "error")
-        return await editMessage(temp, "<b>Failed to download torrent file!</b>")
 
-    name = await TorDownloader.get_name_from_torfile(torrent_path)
-    if not name:
-        return await editMessage(temp, "<b>Could not extract anime name from torrent file!</b>")
+# ─── /connect ─────────────────────────────────────────────────────────────────
+
+@bot.on_message(command("connect") & private & user(Var.ADMINS))
+async def connect_cmd(client, message):
+    args = message.text.split(maxsplit=1)
+    if len(args) <= 1:
+        return await sendMessage(
+            message,
+            "Usage: /connect <code>&lt;anime name&gt;</code>\n\n"
+            "Example: /connect <code>Hell's Paradise</code>"
+        )
+
+    anime_name = args[1].strip()
+    stat = await sendMessage(message, f"<i>Searching AniList for:</i> <b>{anime_name}</b>...")
+
+    aniInfo = TextEditor(anime_name)
+    await aniInfo.load_anilist()
+    ani_id = aniInfo.adata.get('id')
+
+    if not ani_id:
+        return await editMessage(stat, f"Anime not found on AniList: <b>{anime_name}</b>\nTry a different name.")
+
+    titles = aniInfo.adata.get('title', {})
+    display_name = titles.get('english') or titles.get('romaji') or anime_name
+
+    pending_connect[message.from_user.id] = {
+        'ani_id': ani_id,
+        'ani_name': display_name
+    }
 
     await editMessage(
-        temp,
-        f"<i><b>Torrent Task Added!</b></i>\n\n"
-        f"    • <b>Anime Name :</b> <code>{name}</code>\n"
-        f"    • <b>Processing...</b>"
+        stat,
+        f"✅ <b>Anime Found:</b> <i>{display_name}</i>\n"
+        f"<b>AniList ID:</b> <code>{ani_id}</code>\n\n"
+        f"Now <b>forward any message</b> from the channel you want to connect.\n"
+        f"<i>(Bot must be admin in that channel)</i>"
     )
-    bot_loop.create_task(get_animes(name, torrent_path, True))
+
+
+# ─── Forward handler for /connect ─────────────────────────────────────────────
+
+@bot.on_message(filters.forwarded & private & user(Var.ADMINS))
+async def handle_forward(client, message):
+    uid = message.from_user.id
+    if uid not in pending_connect:
+        return
+
+    ani_info = pending_connect.pop(uid)
+
+    if not message.forward_from_chat:
+        return await sendMessage(
+            message,
+            "Could not get channel info.\n\n"
+            "Make sure:\n"
+            "• You forwarded from a <b>channel</b> (not a group)\n"
+            "• The channel's forward privacy is not restricted"
+        )
+
+    channel = message.forward_from_chat
+    channel_id = channel.id
+    channel_name = channel.title or "Unknown"
+
+    try:
+        invite = await client.create_chat_invite_link(channel_id)
+        invite_link = invite.invite_link
+    except Exception:
+        invite_link = f"https://t.me/{channel.username}" if channel.username else ""
+
+    await db.connectChannel(
+        ani_info['ani_id'],
+        ani_info['ani_name'],
+        channel_id,
+        channel_name,
+        invite_link
+    )
+
+    await sendMessage(
+        message,
+        f"✅ <b>Channel Connected Successfully!</b>\n\n"
+        f"• <b>Anime:</b> {ani_info['ani_name']}\n"
+        f"• <b>AniList ID:</b> <code>{ani_info['ani_id']}</code>\n"
+        f"• <b>Channel:</b> {channel_name}\n"
+        f"• <b>Channel ID:</b> <code>{channel_id}</code>\n"
+        f"• <b>Invite Link:</b> {invite_link}\n\n"
+        f"<i>From now, this anime will be uploaded to the connected channel.</i>"
+    )
+
+
+# ─── /disconnect ──────────────────────────────────────────────────────────────
+
+@bot.on_message(command("disconnect") & private & user(Var.ADMINS))
+async def disconnect_cmd(client, message):
+    args = message.text.split(maxsplit=1)
+    if len(args) <= 1:
+        return await sendMessage(
+            message,
+            "Usage: /disconnect <code>&lt;anilist id&gt;</code>\n\n"
+            "Use /connections to see all connected anime IDs."
+        )
+
+    try:
+        ani_id = int(args[1].strip())
+    except ValueError:
+        return await sendMessage(message, "Invalid AniList ID. Must be a number.")
+
+    conn = await db.getChannelConnection(ani_id)
+    if not conn:
+        return await sendMessage(message, f"No connection found for AniList ID: <code>{ani_id}</code>")
+
+    await db.disconnectChannel(ani_id)
+    await sendMessage(
+        message,
+        f"✅ <b>Disconnected!</b>\n\n"
+        f"• <b>Anime:</b> {conn.get('ani_name', 'Unknown')}\n"
+        f"• <b>Channel:</b> {conn.get('channel_name', 'Unknown')}\n\n"
+        f"<i>This anime will now upload to main channel.</i>"
+    )
+
+
+# ─── /connections ─────────────────────────────────────────────────────────────
+
+@bot.on_message(command("connections") & private & user(Var.ADMINS))
+async def connections_cmd(client, message):
+    all_conn = await db.getAllConnections()
+
+    if not all_conn:
+        return await sendMessage(message, "No channel connections found.\n\nUse /connect to add one.")
+
+    text = f"<b>Channel Connections ({len(all_conn)}):</b>\n\n"
+    for i, conn in enumerate(all_conn, 1):
+        text += (
+            f"{i}. <b>{conn.get('ani_name', 'Unknown')}</b>\n"
+            f"   ├ <b>AniList ID:</b> <code>{conn['_id']}</code>\n"
+            f"   ├ <b>Channel:</b> {conn.get('channel_name', 'Unknown')}\n"
+            f"   └ <b>Link:</b> {conn.get('invite_link', 'N/A')}\n\n"
+        )
+
+    text += "<i>Use /disconnect &lt;anilist id&gt; to remove a connection.</i>"
+    await sendMessage(message, text)
+
+
+# ─── /delanime ────────────────────────────────────────────────────────────────
+
+@bot.on_message(command("delanime") & private & user(Var.ADMINS))
+async def delanime_cmd(client, message):
+    args = message.text.split(maxsplit=1)
+    if len(args) <= 1:
+        return await sendMessage(message, "Usage: /delanime <code>&lt;anilist id&gt;</code>")
+
+    try:
+        ani_id = int(args[1].strip())
+    except ValueError:
+        return await sendMessage(message, "Invalid AniList ID. Must be a number.")
+
+    await db.delAnime(ani_id)
+    if ani_id in ani_cache['completed']:
+        ani_cache['completed'].discard(ani_id)
+    if ani_id in ani_cache['ongoing']:
+        ani_cache['ongoing'].discard(ani_id)
+
+    await sendMessage(message, f"✅ Anime <code>{ani_id}</code> deleted from database.")
+
+
+# ─── /users ───────────────────────────────────────────────────────────────────
+
+@bot.on_message(command("users") & private & user(Var.ADMINS))
+async def users_cmd(client, message):
+    total = await db.totalUsers()
+    await sendMessage(message, f"<b>Total Users:</b> <code>{total}</code>")
