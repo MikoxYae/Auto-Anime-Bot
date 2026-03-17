@@ -1,4 +1,4 @@
-from asyncio import gather, create_task, sleep as asleep, Event
+from asyncio import gather, create_task, sleep as asleep, Event, Queue as AsyncQueue
 from asyncio.subprocess import PIPE
 from os import path as ospath
 from aiofiles import open as aiopen
@@ -59,7 +59,10 @@ async def get_animes(name, torrent, force=False):
             )
 
             await asleep(1.5)
-            stat_msg = await sendMessage(Var.MAIN_CHANNEL, f"‣ <b>Anime Name :</b> <b><i>{name}</i></b>\n\n<i>Downloading...</i>")
+            stat_msg = await sendMessage(
+                Var.MAIN_CHANNEL,
+                f"‣ <b>Anime Name :</b> <b><i>{name}</i></b>\n\n<i>Downloading...</i>"
+            )
             dl = await TorDownloader("./downloads").download(torrent, name)
             if not dl or not ospath.exists(dl):
                 await rep.report(f"File Download Incomplete, Try Again", "error")
@@ -76,10 +79,13 @@ async def get_animes(name, torrent, force=False):
             await ffEvent.wait()
 
             await ffLock.acquire()
-            btns = []
-            total_quals = len(Var.QUALS)
 
-            async def encode_one(qual, turn_index):
+            total_quals = len(Var.QUALS)
+            btns = []
+            upload_queue = AsyncQueue()
+
+            # --- Encoder: jaise hi quality done ho, queue mein daal do ---
+            async def encode_and_queue(qual, turn_index):
                 filename = await aniInfo.get_upname(qual)
                 await rep.report(f"Starting Encode [{qual}p]...", "info")
                 try:
@@ -88,60 +94,67 @@ async def get_animes(name, torrent, force=False):
                         turn_index=turn_index,
                         total_quals=total_quals
                     ).start_encode()
-                    return qual, filename, out_path
                 except Exception as e:
                     await rep.report(f"Encode Error [{qual}p]: {e}", "error")
-                    return qual, filename, None
+                    out_path = None
+                await upload_queue.put((qual, filename, out_path))
+
+            # --- Uploader: queue se uthao aur turant upload karo ---
+            async def upload_worker():
+                for _ in range(total_quals):
+                    qual, filename, out_path = await upload_queue.get()
+
+                    if not out_path:
+                        await rep.report(f"Skipping upload for {qual}p — encode failed", "warning")
+                        continue
+
+                    await editMessage(
+                        stat_msg,
+                        f"‣ <b>Anime Name :</b> <b><i>{filename}</i></b>\n\n<i>Uploading {qual}p...</i>"
+                    )
+                    await asleep(1.5)
+
+                    try:
+                        msg = await TgUploader(stat_msg).upload(out_path, qual)
+                    except Exception as e:
+                        await rep.report(f"Upload Error [{qual}p]: {e}", "error")
+                        continue
+
+                    await rep.report(f"Successfully Uploaded {qual}p!", "info")
+                    msg_id = msg.id
+                    link = f"https://telegram.me/{(await bot.get_me()).username}?start={await encode('get-' + str(msg_id * abs(Var.FILE_STORE)))}"
+
+                    if post_msg:
+                        if len(btns) != 0 and len(btns[-1]) == 1:
+                            btns[-1].insert(1, InlineKeyboardButton(
+                                f"{btn_formatter[qual]} - {convertBytes(msg.document.file_size)}", url=link))
+                        else:
+                            btns.append([InlineKeyboardButton(
+                                f"{btn_formatter[qual]} - {convertBytes(msg.document.file_size)}", url=link)])
+                        await editMessage(
+                            post_msg,
+                            post_msg.caption.html if post_msg.caption else "",
+                            InlineKeyboardMarkup(btns)
+                        )
+
+                    await db.saveAnime(ani_id, ep_no, qual, post_id)
+                    bot_loop.create_task(extra_utils(msg_id))
 
             await editMessage(
                 stat_msg,
                 f"‣ <b>Anime Name :</b> <b><i>{name}</i></b>\n\n"
                 f"<i>Encoding {total_quals} Qualities Simultaneously...</i>\n"
                 f"<b>Qualities:</b> <code>{' | '.join(q + 'p' for q in Var.QUALS)}</code>\n"
-                f"<i>(Progress rotates every 20s per quality)</i>"
+                f"<i>(Jaise hi quality done hogi, turant upload hogi)</i>"
             )
 
-            encode_results = await gather(*[encode_one(qual, i) for i, qual in enumerate(Var.QUALS)])
-            await rep.report("All Qualities Encoded! Starting Uploads...", "info")
-
-            all_failed = True
-            for result in encode_results:
-                if not result:
-                    continue
-                qual, filename, out_path = result
-                if not out_path:
-                    await rep.report(f"Skipping upload for {qual}p — encode failed", "warning")
-                    continue
-
-                all_failed = False
-                await editMessage(stat_msg, f"‣ <b>Anime Name :</b> <b><i>{filename}</i></b>\n\n<i>Uploading {qual}p...</i>")
-                await asleep(1.5)
-
-                try:
-                    msg = await TgUploader(stat_msg).upload(out_path, qual)
-                except Exception as e:
-                    await rep.report(f"Upload Error [{qual}p]: {e}", "error")
-                    continue
-
-                await rep.report(f"Successfully Uploaded {qual}p!", "info")
-                msg_id = msg.id
-                link = f"https://telegram.me/{(await bot.get_me()).username}?start={await encode('get-' + str(msg_id * abs(Var.FILE_STORE)))}"
-
-                if post_msg:
-                    if len(btns) != 0 and len(btns[-1]) == 1:
-                        btns[-1].insert(1, InlineKeyboardButton(f"{btn_formatter[qual]} - {convertBytes(msg.document.file_size)}", url=link))
-                    else:
-                        btns.append([InlineKeyboardButton(f"{btn_formatter[qual]} - {convertBytes(msg.document.file_size)}", url=link)])
-                    await editMessage(post_msg, post_msg.caption.html if post_msg.caption else "", InlineKeyboardMarkup(btns))
-
-                await db.saveAnime(ani_id, ep_no, qual, post_id)
-                bot_loop.create_task(extra_utils(msg_id))
+            # Encoders aur uploader ek sath chalao
+            await gather(
+                *[encode_and_queue(qual, i) for i, qual in enumerate(Var.QUALS)],
+                upload_worker()
+            )
 
             ffLock.release()
-
-            if all_failed:
-                await rep.report(f"All encodes failed for: {name}", "error")
-
             await stat_msg.delete()
             if ospath.exists(dl):
                 await aioremove(dl)
