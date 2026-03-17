@@ -1,4 +1,4 @@
-from asyncio import gather, sleep as asleep, Event, Queue as AsyncQueue
+from asyncio import gather, sleep as asleep, Event, Queue as AsyncQueue, Semaphore
 from os import path as ospath
 from aiofiles.os import remove as aioremove
 from traceback import format_exc
@@ -60,7 +60,6 @@ async def get_animes(name, torrent, force=False):
             # ── Check for connected channel ───────────────────────────────
             conn = await db.getChannelConnection(ani_id) if ani_id else None
 
-            # Agar ani_id nahi mila, name se fuzzy match karo
             if not conn:
                 all_conns = await db.getAllConnections()
                 for c in all_conns:
@@ -132,7 +131,9 @@ async def get_animes(name, torrent, force=False):
             btns         = []
             upload_queue = AsyncQueue()
 
-            # ── Encode one quality and push to upload queue ───────────────
+            # ── Semaphore: max 2 encodes at a time ────────────────────────
+            encode_sem = Semaphore(2)
+
             async def encode_and_queue(qual, turn_index):
                 filename = await aniInfo.get_upname(qual)
                 if not filename:
@@ -140,16 +141,17 @@ async def get_animes(name, torrent, force=False):
                     filename  = f"[{qual}p] {safe_name}.mkv"
                     LOGS.warning(f"get_upname returned None for {qual}p, using fallback: {filename}")
 
-                await rep.report(f"Starting Encode [{qual}p]...", "info")
-                try:
-                    out_path = await FFEncoder(
-                        stat_msg, dl, filename, qual,
-                        turn_index=turn_index,
-                        total_quals=total_quals
-                    ).start_encode()
-                except Exception as e:
-                    await rep.report(f"Encode Error [{qual}p]: {e}", "error")
-                    out_path = None
+                async with encode_sem:
+                    await rep.report(f"Starting Encode [{qual}p]...", "info")
+                    try:
+                        out_path = await FFEncoder(
+                            stat_msg, dl, filename, qual,
+                            turn_index=turn_index,
+                            total_quals=total_quals
+                        ).start_encode()
+                    except Exception as e:
+                        await rep.report(f"Encode Error [{qual}p]: {e}", "error")
+                        out_path = None
 
                 await upload_queue.put((qual, filename, out_path))
 
@@ -205,7 +207,7 @@ async def get_animes(name, torrent, force=False):
             await editMessage(
                 stat_msg,
                 f"‣ <b>Anime Name :</b> <b><i>{name}</i></b>\n\n"
-                f"<i>Encoding {total_quals} Qualities Simultaneously...</i>\n"
+                f"<i>Encoding {total_quals} Qualities (2 at a time)...</i>\n"
                 f"<b>Qualities:</b> <code>{' | '.join(q + 'p' for q in Var.QUALS)}</code>"
             )
 
