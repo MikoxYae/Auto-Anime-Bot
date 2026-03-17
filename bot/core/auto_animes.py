@@ -7,7 +7,7 @@ from traceback import format_exc
 from time import time
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from bot import bot, bot_loop, Var, ani_cache, ffQueue, ffLock, ff_queued
+from bot import bot, bot_loop, Var, ani_cache, ffQueue, ffLock, ff_queued, LOGS
 from .tordownload import TorDownloader
 from .database import db
 from .func_utils import getfeed, encode, editMessage, sendMessage, convertBytes
@@ -63,6 +63,7 @@ async def get_animes(name, torrent, force=False):
                 Var.MAIN_CHANNEL,
                 f"‣ <b>Anime Name :</b> <b><i>{name}</i></b>\n\n<i>Downloading...</i>"
             )
+
             dl = await TorDownloader("./downloads").download(torrent, name)
             if not dl or not ospath.exists(dl):
                 await rep.report(f"File Download Incomplete, Try Again", "error")
@@ -84,9 +85,12 @@ async def get_animes(name, torrent, force=False):
             btns = []
             upload_queue = AsyncQueue()
 
-            # --- Encoder: jaise hi quality done ho, queue mein daal do ---
             async def encode_and_queue(qual, turn_index):
                 filename = await aniInfo.get_upname(qual)
+                if not filename:
+                    safe_name = name.replace('/', '_').replace('\\', '_')
+                    filename = f"[{qual}p] {safe_name}.mkv"
+                    LOGS.warning(f"get_upname returned None for {qual}p, using fallback: {filename}")
                 await rep.report(f"Starting Encode [{qual}p]...", "info")
                 try:
                     out_path = await FFEncoder(
@@ -99,7 +103,6 @@ async def get_animes(name, torrent, force=False):
                     out_path = None
                 await upload_queue.put((qual, filename, out_path))
 
-            # --- Uploader: queue se uthao aur turant upload karo ---
             async def upload_worker():
                 for _ in range(total_quals):
                     qual, filename, out_path = await upload_queue.get()
@@ -127,10 +130,14 @@ async def get_animes(name, torrent, force=False):
                     if post_msg:
                         if len(btns) != 0 and len(btns[-1]) == 1:
                             btns[-1].insert(1, InlineKeyboardButton(
-                                f"{btn_formatter[qual]} - {convertBytes(msg.document.file_size)}", url=link))
+                                f"{btn_formatter.get(qual, qual+'p')} - {convertBytes(msg.document.file_size)}",
+                                url=link
+                            ))
                         else:
                             btns.append([InlineKeyboardButton(
-                                f"{btn_formatter[qual]} - {convertBytes(msg.document.file_size)}", url=link)])
+                                f"{btn_formatter.get(qual, qual+'p')} - {convertBytes(msg.document.file_size)}",
+                                url=link
+                            )])
                         await editMessage(
                             post_msg,
                             post_msg.caption.html if post_msg.caption else "",
@@ -148,7 +155,6 @@ async def get_animes(name, torrent, force=False):
                 f"<i>(Jaise hi quality done hogi, turant upload hogi)</i>"
             )
 
-            # Encoders aur uploader ek sath chalao
             await gather(
                 *[encode_and_queue(qual, i) for i, qual in enumerate(Var.QUALS)],
                 upload_worker()
