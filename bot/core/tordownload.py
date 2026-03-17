@@ -18,13 +18,23 @@ class TorDownloader:
         if torrent.startswith("magnet:"):
             torp = _TorrentDownloader(torrent, self.__downdir)
             await torp.start_download()
-            return ospath.join(self.__downdir, name)
+            try:
+                actual_name = torp._torrent_info._info.name()
+                LOGS.info(f"Magnet downloaded as: {actual_name}")
+                return ospath.join(self.__downdir, actual_name)
+            except Exception as e:
+                LOGS.warning(f"Could not get actual torrent name, using dn= name: {e}")
+                return ospath.join(self.__downdir, name)
+
         elif torfile := await self.get_torfile(torrent):
             torp = _TorrentDownloader(torfile, self.__downdir)
             await torp.start_download()
-            dl_name = torp._torrent_info._info.name() if hasattr(torp, '_torrent_info') else name
+            try:
+                actual_name = torp._torrent_info._info.name()
+            except Exception:
+                actual_name = name
             await aioremove(torfile)
-            return ospath.join(self.__downdir, dl_name)
+            return ospath.join(self.__downdir, actual_name)
 
     @handle_logs
     async def get_torfile(self, url):
