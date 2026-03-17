@@ -1,4 +1,5 @@
-from time import time, sleep
+from time import time
+from asyncio import sleep as asleep
 from traceback import format_exc
 from math import floor
 from os import path as ospath
@@ -6,7 +7,7 @@ from aiofiles.os import remove as aioremove
 from pyrogram.errors import FloodWait
 
 from bot import bot, Var
-from .func_utils import editMessage, sendMessage, convertBytes, convertTime
+from .func_utils import editMessage, convertBytes, convertTime
 from .reporter import rep
 
 THUMB_PATH = "thumb.jpg"
@@ -44,7 +45,7 @@ class TgUploader:
                     progress=self.progress_status
                 )
         except FloodWait as e:
-            sleep(e.value * 1.5)
+            await asleep(e.value * 1.5)
             return await self.upload(path, qual)
         except Exception as e:
             await rep.report(format_exc(), "error")
@@ -58,7 +59,7 @@ class TgUploader:
             self.__client.stop_transmission()
         now = time()
         diff = now - self.__start
-        if (now - self.__updater) >= 7 or current == total:
+        if (now - self.__updater) >= 10 or current == total:
             self.__updater = now
             percent = round(current / total * 100, 2)
             speed = current / diff
