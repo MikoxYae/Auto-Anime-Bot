@@ -26,8 +26,30 @@ class MongoDB:
         if post_id:
             await self.__animes.update_one({'_id': ani_id}, {'$set': {"msg_id": post_id}}, upsert=True)
 
+    async def delAnime(self, ani_id):
+        await self.__animes.delete_one({'_id': ani_id})
+
     async def reboot(self):
         await self.__animes.drop()
+
+    # ─── Custom Pic Methods ───────────────────────────────────────────────────
+
+    async def saveAnimePic(self, ani_id, file_id):
+        await self.__animes.update_one(
+            {'_id': ani_id},
+            {'$set': {'custom_pic': file_id}},
+            upsert=True
+        )
+
+    async def getAnimePic(self, ani_id):
+        doc = await self.__animes.find_one({'_id': ani_id})
+        return doc.get('custom_pic') if doc else None
+
+    async def delAnimePic(self, ani_id):
+        await self.__animes.update_one(
+            {'_id': ani_id},
+            {'$unset': {'custom_pic': ""}}
+        )
 
     # ─── Channel Connection Methods ───────────────────────────────────────────
 
