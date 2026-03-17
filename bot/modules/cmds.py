@@ -1,5 +1,6 @@
 from asyncio import sleep as asleep
 from traceback import format_exc
+from urllib.parse import unquote
 
 from pyrogram import filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -123,7 +124,8 @@ async def addmagnet_cmd(client, message):
         return await sendMessage(message, "Invalid magnet link.")
 
     stat = await sendMessage(message, "<i>Processing magnet link...</i>")
-    bot.loop.create_task(get_animes(magnet.split("dn=")[-1].split("&")[0], magnet, force=True))
+    ani_name = unquote(magnet.split("dn=")[-1].split("&")[0])
+    bot.loop.create_task(get_animes(ani_name, magnet, force=True))
     await editMessage(stat, "<i>Magnet added to queue!</i>")
 
 
