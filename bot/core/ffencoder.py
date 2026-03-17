@@ -62,7 +62,7 @@ class FFEncoder:
                 await editMessage(self.message, progress_str)
                 if (prog := findall(r"progress=(\w+)", text)) and prog[-1] == 'end':
                     break
-            await asleep(8)
+            await asleep(25)
 
     async def start_encode(self):
         if ospath.exists(self.__prog_file):
