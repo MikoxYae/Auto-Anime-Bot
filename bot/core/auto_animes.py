@@ -241,3 +241,9 @@ async def extra_utils(msg_id, chat_id=None):
     if Var.BACKUP_CHANNEL != 0:
         for cid in str(Var.BACKUP_CHANNEL).split():
             await msg.copy(int(cid))
+    if Var.AUTO_DEL:
+        await asleep(Var.DEL_TIMER)
+        try:
+            await msg.delete()
+        except Exception:
+            pass
