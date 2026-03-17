@@ -5,7 +5,7 @@ from json import loads as jloads
 from re import findall
 from math import floor
 from os import path as ospath
-from time import time, sleep
+from time import time
 from traceback import format_exc
 from asyncio import sleep as asleep, create_subprocess_shell
 from asyncio.subprocess import PIPE
@@ -31,12 +31,12 @@ def handle_logs(func):
         except Exception:
             await rep.report(format_exc(), "error")
     return wrapper
-    
+
 async def sync_to_async(func, *args, wait=True, **kwargs):
     pfunc = partial(func, *args, **kwargs)
     future = bot_loop.run_in_executor(ThreadPoolExecutor(max_workers=cpu_count() * 125), pfunc)
     return await future if wait else future
-    
+
 def new_task(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -74,24 +74,21 @@ async def get_telegraph(out):
         title="Mediainfo",
         author=uname,
         author_url=f"https://t.me/{uname}",
-        text=f"""<pre>
-{out}
-</pre>
-""",
-        )
+        text=f"""<pre>\n{out}\n</pre>\n""",
+    )
     return page.get("url")
-    
+
 async def sendMessage(chat, text, buttons=None, get_error=False, **kwargs):
     try:
         if isinstance(chat, int):
             return await bot.send_message(chat_id=chat, text=text, disable_web_page_preview=True,
-                                        disable_notification=False, reply_markup=buttons, **kwargs)
+                                          disable_notification=False, reply_markup=buttons, **kwargs)
         else:
-            return await chat.reply(text=text, quote=True, disable_web_page_preview=True, disable_notification=False,
-                                    reply_markup=buttons, **kwargs)
+            return await chat.reply(text=text, quote=True, disable_web_page_preview=True,
+                                    disable_notification=False, reply_markup=buttons, **kwargs)
     except FloodWait as f:
-        await rep.report(f, "warning")
-        sleep(f.value * 1.2)
+        await rep.report(f"FloodWait: {f.value}s", "warning")
+        await asleep(f.value * 1.2)
         return await sendMessage(chat, text, buttons, get_error, **kwargs)
     except ReplyMarkupInvalid:
         return await sendMessage(chat, text, None, get_error, **kwargs)
@@ -100,16 +97,16 @@ async def sendMessage(chat, text, buttons=None, get_error=False, **kwargs):
         if get_error:
             raise e
         return str(e)
-        
+
 async def editMessage(msg, text, buttons=None, get_error=False, **kwargs):
     try:
         if not msg:
             return None
-        return await msg.edit_text(text=text, disable_web_page_preview=True, 
-                                        reply_markup=buttons, **kwargs)
+        return await msg.edit_text(text=text, disable_web_page_preview=True,
+                                   reply_markup=buttons, **kwargs)
     except FloodWait as f:
-        await rep.report(f, "warning")
-        sleep(f.value * 1.2)
+        await rep.report(f"FloodWait: {f.value}s", "warning")
+        await asleep(f.value * 1.2)
         return await editMessage(msg, text, buttons, get_error, **kwargs)
     except ReplyMarkupInvalid:
         return await editMessage(msg, text, None, get_error, **kwargs)
@@ -139,7 +136,7 @@ async def is_fsubbed(uid):
             await rep.report(format_exc(), "warning")
             continue
     return True
-        
+
 async def get_fsubs(uid, txtargs):
     txt = "<b><i>Please Join Following Channels to Use this Bot!</i></b>\n\n"
     btns = []
@@ -171,12 +168,12 @@ async def mediainfo(file, get_json=False, get_duration=False):
             try:
                 return float(jloads(stdout.decode())['media']['track'][0]['Duration'])
             except Exception:
-                return 1440 # 24min
+                return 1440
         return await get_telegraph(stdout.decode())
     except Exception as err:
         await rep.report(format_exc(), "error")
         return ""
-        
+
 async def clean_up():
     try:
         (await aiormtree(dirtree) for dirtree in ("downloads", "thumbs", "encode"))
@@ -188,13 +185,13 @@ def convertTime(s: int) -> str:
     hr, m = divmod(m, 60)
     days, hr = divmod(hr, 24)
     convertedTime = (f"{int(days)}d, " if days else "") + \
-          (f"{int(hr)}h, " if hr else "") + \
-          (f"{int(m)}m, " if m else "") + \
-          (f"{int(s)}s, " if s else "")
+                    (f"{int(hr)}h, " if hr else "") + \
+                    (f"{int(m)}m, " if m else "") + \
+                    (f"{int(s)}s, " if s else "")
     return convertedTime[:-2]
 
 def convertBytes(sz) -> str:
-    if not sz: 
+    if not sz:
         return ""
     sz = int(sz)
     ind = 0
