@@ -213,7 +213,7 @@ class TextEditor:
         titles = self.adata.get("title", {})
         
         return CAPTION_FORMAT.format(
-                title=titles.get('english') or titles.get('romaji') or title.get('native'),
+                title=titles.get('english') or titles.get('romaji') or titles.get('native'),
                 form=self.adata.get("format") or "N/A",
                 genres=", ".join(f"{GENRES_EMOJI[x]} #{x.replace(' ', '_').replace('-', '_')}" for x in (self.adata.get('genres') or [])),
                 avg_score=f"{sc}%" if (sc := self.adata.get('averageScore')) else "N/A",
