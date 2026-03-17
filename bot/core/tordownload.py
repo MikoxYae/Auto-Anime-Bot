@@ -1,4 +1,4 @@
-from os import path as ospath
+from os import path as ospath, listdir
 from aiofiles import open as aiopen
 from aiofiles.os import path as aiopath, remove as aioremove, mkdir
 
@@ -15,26 +15,27 @@ class TorDownloader:
 
     @handle_logs
     async def download(self, torrent, name=None):
+        before = set(listdir(self.__downdir)) if ospath.exists(self.__downdir) else set()
+
         if torrent.startswith("magnet:"):
             torp = _TorrentDownloader(torrent, self.__downdir)
             await torp.start_download()
-            try:
-                actual_name = torp._torrent_info._info.name()
-                LOGS.info(f"Magnet downloaded as: {actual_name}")
-                return ospath.join(self.__downdir, actual_name)
-            except Exception as e:
-                LOGS.warning(f"Could not get actual torrent name, using dn= name: {e}")
-                return ospath.join(self.__downdir, name)
-
         elif torfile := await self.get_torfile(torrent):
             torp = _TorrentDownloader(torfile, self.__downdir)
             await torp.start_download()
-            try:
-                actual_name = torp._torrent_info._info.name()
-            except Exception:
-                actual_name = name
             await aioremove(torfile)
+        else:
+            return None
+
+        after = set(listdir(self.__downdir))
+        new_files = after - before
+        if new_files:
+            actual_name = new_files.pop()
+            LOGS.info(f"Downloaded file detected: {actual_name}")
             return ospath.join(self.__downdir, actual_name)
+
+        LOGS.warning("Could not detect downloaded file, falling back to dn= name")
+        return ospath.join(self.__downdir, name) if name else None
 
     @handle_logs
     async def get_torfile(self, url):
