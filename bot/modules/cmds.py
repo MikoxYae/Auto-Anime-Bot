@@ -45,7 +45,7 @@ async def start_cmd(client, message):
     if len(args) > 1 and args[1].startswith("get-"):
         try:
             data = await decode(args[1][4:])
-            msg_id = int(int(data) / abs(Var.FILE_STORE))
+            msg_id = int(data) // abs(Var.FILE_STORE)
             msg = await client.get_messages(Var.FILE_STORE, message_ids=msg_id)
             await msg.copy(message.chat.id)
         except Exception:
@@ -238,7 +238,11 @@ async def delpic_cmd(client, message):
         return await sendMessage(message, "Invalid AniList ID. Must be a number.")
 
     await db.delAnimePic(ani_id)
-    await sendMessage(message, f"✅ Custom picture removed for <code>{ani_id}</code>.\n\n<i>AniList default poster use hoga ab se.</i>")
+    await sendMessage(
+        message,
+        f"✅ Custom picture removed for <code>{ani_id}</code>.\n\n"
+        f"<i>AniList default poster use hoga ab se.</i>"
+    )
 
 
 # ─── /connect ─────────────────────────────────────────────────────────────────
