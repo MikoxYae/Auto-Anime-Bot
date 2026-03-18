@@ -198,6 +198,7 @@ async def fetch_cmd(client, message):
 async def pause_cmd(client, message):
     if not ffpids_cache:
         return await sendMessage(message, "⚠️ <b>No encoding task is currently running.</b>")
+
     paused = 0
     for pid in ffpids_cache:
         try:
@@ -205,10 +206,29 @@ async def pause_cmd(client, message):
             paused += 1
         except Exception:
             pass
-    if paused:
-        await sendMessage(message, "⏸ <b>Encoding paused.</b>\n\nSend /resume to continue.")
-    else:
-        await sendMessage(message, "⚠️ <b>Could not pause. Process may have already finished.</b>")
+
+    if not paused:
+        return await sendMessage(message, "⚠️ <b>Could not pause. Process may have already finished.</b>")
+
+    pending = [p for p in ff_queue_order if p in ff_queue_names]
+
+    if not pending:
+        return await sendMessage(
+            message,
+            "⏸ <b>Encoding paused.</b>\n\n"
+            "No tasks are waiting in queue.\n"
+            "Send /resume to continue current task."
+        )
+
+    text = "⏸ <b>Encoding Paused!</b>\n\n📋 <b>Queue — Choose which anime to run next:</b>\n\n"
+    btn_row = []
+    for i, post_id in enumerate(pending, 1):
+        name = ff_queue_names.get(post_id, f"Task {post_id}")
+        text += f"<b>{i}.</b> <i>{name}</i>\n"
+        btn_row.append(InlineKeyboardButton(str(i), callback_data=f"qpriority_{post_id}"))
+
+    text += "\n<i>Tap a number to move that anime to the top and resume encoding.</i>"
+    await sendMessage(message, text, buttons=InlineKeyboardMarkup([btn_row]))
 
 
 # ─── /resume ──────────────────────────────────────────────────────────────────
@@ -264,12 +284,15 @@ async def queue_priority_cb(client, callback_query):
 
     for pid in ffpids_cache:
         try:
-            kill(pid, SIGSTOP)
+            kill(pid, SIGCONT)
         except Exception:
             pass
 
     name = ff_queue_names.get(post_id, f"Task {post_id}")
-    await callback_query.answer(f"✅ '{name}' moved to top.\nCurrent task paused.", show_alert=True)
+    await callback_query.answer(
+        f"✅ '{name}' set as next.\nCurrent task resumed — it will finish first, then your selection runs.",
+        show_alert=True
+    )
 
     pending = [p for p in ff_queue_order if p in ff_queue_names]
     if not pending:
