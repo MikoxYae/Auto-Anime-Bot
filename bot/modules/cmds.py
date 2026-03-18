@@ -3,7 +3,7 @@ from traceback import format_exc
 from urllib.parse import unquote
 
 from pyrogram import filters
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 
 from bot import bot, Var, ani_cache, LOGS
 from bot.core.database import db
@@ -29,12 +29,14 @@ def user(uid):
 
 private = filters.private
 
+PICS_PER_PAGE = 10
+
 
 # ─── Pending state dicts ──────────────────────────────────────────────────────
 
-pending_connect = {}   # uid -> {ani_id, ani_name}
-pending_torrent = {}   # uid -> True
-pending_pic     = {}   # uid -> {ani_id, ani_name}
+pending_connect = {}
+pending_torrent = {}
+pending_pic     = {}
 
 
 # ─── Delete after helper ──────────────────────────────────────────────────────
@@ -47,6 +49,34 @@ async def _delete_after(msg, delay):
         pass
 
 
+# ─── Pics page builder ────────────────────────────────────────────────────────
+
+def _build_pics_page(all_pics, page):
+    total       = len(all_pics)
+    total_pages = max(1, (total + PICS_PER_PAGE - 1) // PICS_PER_PAGE)
+    start       = page * PICS_PER_PAGE
+    end         = start + PICS_PER_PAGE
+    page_items  = all_pics[start:end]
+
+    if not page_items:
+        return "<b>Koi custom pic set nahi hai.</b>", None
+
+    text = f"<b>🖼 Custom Pics — Page {page + 1}/{total_pages} ({total} total):</b>\n\n"
+    for i, item in enumerate(page_items, start + 1):
+        name   = item.get('ani_name_pic') or 'Unknown'
+        ani_id = item['_id']
+        text  += f"{i}. <b>{name}</b>\n   └ <code>{ani_id}</code>\n\n"
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"listpics_{page - 1}"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"listpics_{page + 1}"))
+
+    markup = InlineKeyboardMarkup([nav]) if nav else None
+    return text, markup
+
+
 # ─── /start ───────────────────────────────────────────────────────────────────
 
 @bot.on_message(command("start") & private)
@@ -54,10 +84,10 @@ async def start_cmd(client, message):
     args = message.text.split()
     if len(args) > 1 and args[1].startswith("get-"):
         try:
-            data = await decode(args[1][4:])
+            data   = await decode(args[1][4:])
             msg_id = int(data) // abs(Var.FILE_STORE)
-            msg = await client.get_messages(Var.FILE_STORE, message_ids=msg_id)
-            sent = await msg.copy(message.chat.id)
+            msg    = await client.get_messages(Var.FILE_STORE, message_ids=msg_id)
+            sent   = await msg.copy(message.chat.id)
             if Var.AUTO_DEL:
                 await sendMessage(
                     message.chat.id,
@@ -96,7 +126,8 @@ async def help_cmd(client, message):
         "/connections - List all connections\n\n"
         "<b>Custom Picture:</b>\n"
         "/addpic <code>&lt;anime name&gt;</code> - Set custom pic for anime\n"
-        "/delpic <code>&lt;anilist id&gt;</code> - Remove custom pic\n\n"
+        "/delpic <code>&lt;anilist id&gt;</code> - Remove custom pic\n"
+        "/listpics - List all anime with custom pics\n\n"
         "<b>Database:</b>\n"
         "/delanime <code>&lt;anilist id&gt;</code> - Delete anime data from DB\n"
         "/users - Total bot users"
@@ -143,7 +174,7 @@ async def addmagnet_cmd(client, message):
     if not magnet.startswith("magnet:"):
         return await sendMessage(message, "Invalid magnet link.")
 
-    stat = await sendMessage(message, "<i>Processing magnet link...</i>")
+    stat     = await sendMessage(message, "<i>Processing magnet link...</i>")
     ani_name = unquote(magnet.split("dn=")[-1].split("&")[0])
     bot.loop.create_task(get_animes(ani_name, magnet, force=True))
     await editMessage(stat, "<i>Magnet added to queue!</i>")
@@ -187,7 +218,7 @@ async def addpic_cmd(client, message):
         )
 
     anime_name = args[1].strip()
-    stat = await sendMessage(message, f"<i>Searching AniList for:</i> <b>{anime_name}</b>...")
+    stat       = await sendMessage(message, f"<i>Searching AniList for:</i> <b>{anime_name}</b>...")
 
     aniInfo = TextEditor(anime_name)
     await aniInfo.load_anilist()
@@ -223,10 +254,10 @@ async def handle_pic(client, message):
     if uid not in pending_pic:
         return
 
-    info = pending_pic.pop(uid)
+    info    = pending_pic.pop(uid)
     file_id = message.photo.file_id
 
-    await db.saveAnimePic(info['ani_id'], file_id)
+    await db.saveAnimePic(info['ani_id'], file_id, ani_name=info['ani_name'])
 
     await sendMessage(
         message,
@@ -243,10 +274,7 @@ async def handle_pic(client, message):
 async def delpic_cmd(client, message):
     args = message.text.split(maxsplit=1)
     if len(args) <= 1:
-        return await sendMessage(
-            message,
-            "Usage: /delpic <code>&lt;anilist id&gt;</code>"
-        )
+        return await sendMessage(message, "Usage: /delpic <code>&lt;anilist id&gt;</code>")
 
     try:
         ani_id = int(args[1].strip())
@@ -259,6 +287,35 @@ async def delpic_cmd(client, message):
         f"✅ Custom picture removed for <code>{ani_id}</code>.\n\n"
         f"<i>AniList default poster use hoga ab se.</i>"
     )
+
+
+# ─── /listpics ────────────────────────────────────────────────────────────────
+
+@bot.on_message(command("listpics") & private & user(Var.ADMINS))
+async def listpics_cmd(client, message):
+    all_pics = await db.getAllAnimePics()
+
+    if not all_pics:
+        return await sendMessage(message, "Koi custom pic set nahi hai.\n\nUse /addpic to add one.")
+
+    text, markup = _build_pics_page(all_pics, 0)
+    await sendMessage(message, text, buttons=markup)
+
+
+# ─── Callback: listpics pagination ───────────────────────────────────────────
+
+@bot.on_callback_query(filters.regex(r"^listpics_(\d+)$") & user(Var.ADMINS))
+async def listpics_page_cb(client, callback_query):
+    page     = int(callback_query.matches[0].group(1))
+    all_pics = await db.getAllAnimePics()
+    text, markup = _build_pics_page(all_pics, page)
+
+    await callback_query.edit_message_text(
+        text,
+        reply_markup=markup,
+        disable_web_page_preview=True
+    )
+    await callback_query.answer()
 
 
 # ─── /connect ─────────────────────────────────────────────────────────────────
@@ -274,7 +331,7 @@ async def connect_cmd(client, message):
         )
 
     anime_name = args[1].strip()
-    stat = await sendMessage(message, f"<i>Searching AniList for:</i> <b>{anime_name}</b>...")
+    stat       = await sendMessage(message, f"<i>Searching AniList for:</i> <b>{anime_name}</b>...")
 
     aniInfo = TextEditor(anime_name)
     await aniInfo.load_anilist()
