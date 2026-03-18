@@ -5,7 +5,7 @@ from traceback import format_exc
 
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from bot import bot, bot_loop, Var, ani_cache, ffQueue, ffLock, ff_queued, LOGS
+from bot import bot, bot_loop, Var, ani_cache, ffQueue, ffLock, ff_queued, ff_queue_names, ff_queue_order, LOGS
 from .tordownload import TorDownloader
 from .database import db
 from .func_utils import getfeed, encode, editMessage, sendMessage, convertBytes
@@ -79,7 +79,7 @@ async def get_animes(name, torrent, force=False):
 
             await rep.report(f"New Anime Torrent Found!\n\n{name}", "info")
 
-            # ── Custom pic check — set ho toh use karo, warna AniList ─────
+            # ── Custom pic check ──────────────────────────────────────────
             custom_pic = await db.getAnimePic(ani_id) if ani_id else None
             poster     = custom_pic or await aniInfo.get_poster()
 
@@ -119,6 +119,8 @@ async def get_animes(name, torrent, force=False):
             post_id  = post_msg.id
             ffEvent  = Event()
             ff_queued[post_id] = ffEvent
+            ff_queue_names[post_id] = name
+            ff_queue_order.append(post_id)
 
             if ffLock.locked():
                 await editMessage(
@@ -176,7 +178,6 @@ async def get_animes(name, torrent, force=False):
                     await asleep(1.5)
 
                     try:
-                        # ── Hamesha FILE_STORE mein upload ────────────────
                         msg = await TgUploader(stat_msg, chat_id=Var.FILE_STORE).upload(out_path, qual)
                     except Exception as e:
                         await rep.report(f"Upload Error [{qual}p]: {e}", "error")
@@ -186,13 +187,11 @@ async def get_animes(name, torrent, force=False):
 
                     store_msg_id = msg.id
 
-                    # ── Button link FILE_STORE msg_id se ─────────────────
                     link = (
                         f"https://telegram.me/{(await bot.get_me()).username}"
                         f"?start=get-{await encode(str(store_msg_id * abs(Var.FILE_STORE)))}"
                     )
 
-                    # ── Button connected/main channel ke post par update ──
                     if post_msg:
                         btn_label = (
                             f"{btn_formatter.get(qual, qual + 'p')} "
