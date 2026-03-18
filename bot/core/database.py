@@ -22,9 +22,17 @@ class MongoDB:
     async def saveAnime(self, ani_id, ep, qual, post_id=None):
         quals = (await self.getAnime(ani_id)).get(ep, {q: False for q in self.__quals})
         quals[qual] = True
-        await self.__animes.update_one({'_id': ani_id}, {'$set': {ep: quals}}, upsert=True)
+        await self.__animes.update_one(
+            {'_id': ani_id},
+            {'$set': {ep: quals}},
+            upsert=True
+        )
         if post_id:
-            await self.__animes.update_one({'_id': ani_id}, {'$set': {"msg_id": post_id}}, upsert=True)
+            await self.__animes.update_one(
+                {'_id': ani_id},
+                {'$set': {"msg_id": post_id}},
+                upsert=True
+            )
 
     async def delAnime(self, ani_id):
         await self.__animes.delete_one({'_id': ani_id})
@@ -34,22 +42,32 @@ class MongoDB:
 
     # ─── Custom Pic Methods ───────────────────────────────────────────────────
 
-    async def saveAnimePic(self, ani_id, file_id):
+    async def saveAnimePic(self, ani_id, file_id, ani_name=None):
+        update = {'custom_pic': file_id}
+        if ani_name:
+            update['ani_name_pic'] = ani_name
         await self.__animes.update_one(
             {'_id': ani_id},
-            {'$set': {'custom_pic': file_id}},
+            {'$set': update},
             upsert=True
         )
 
     async def getAnimePic(self, ani_id):
-        doc = await self.__animes.find_one({'_id': ani_id})
+        doc = await self.__animes.find_one({'_id': ani_id}, {'custom_pic': 1})
         return doc.get('custom_pic') if doc else None
 
     async def delAnimePic(self, ani_id):
         await self.__animes.update_one(
             {'_id': ani_id},
-            {'$unset': {'custom_pic': ""}}
+            {'$unset': {'custom_pic': '', 'ani_name_pic': ''}}
         )
+
+    async def getAllAnimePics(self):
+        cursor = self.__animes.find(
+            {'custom_pic': {'$exists': True}},
+            {'_id': 1, 'custom_pic': 1, 'ani_name_pic': 1}
+        )
+        return await cursor.to_list(length=None)
 
     # ─── Channel Connection Methods ───────────────────────────────────────────
 
