@@ -37,6 +37,16 @@ pending_torrent = {}   # uid -> True
 pending_pic     = {}   # uid -> {ani_id, ani_name}
 
 
+# ─── Delete after helper ──────────────────────────────────────────────────────
+
+async def _delete_after(msg, delay):
+    await asleep(delay)
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+
+
 # ─── /start ───────────────────────────────────────────────────────────────────
 
 @bot.on_message(command("start") & private)
@@ -47,7 +57,13 @@ async def start_cmd(client, message):
             data = await decode(args[1][4:])
             msg_id = int(data) // abs(Var.FILE_STORE)
             msg = await client.get_messages(Var.FILE_STORE, message_ids=msg_id)
-            await msg.copy(message.chat.id)
+            sent = await msg.copy(message.chat.id)
+            if Var.AUTO_DEL:
+                await sendMessage(
+                    message.chat.id,
+                    f"⚠️ <i>Yeh file <b>{Var.DEL_TIMER} seconds</b> baad delete ho jaayegi.</i>"
+                )
+                bot.loop.create_task(_delete_after(sent, Var.DEL_TIMER))
         except Exception:
             await sendMessage(message, "File not found or expired.")
     else:
