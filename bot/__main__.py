@@ -4,9 +4,9 @@ from pyrogram import idle
 from pyrogram.filters import command, user
 from os import path as ospath, execl, kill
 from sys import executable
-from signal import SIGKILL
+from signal import SIGKILL, SIGSTOP, SIGCONT
 
-from bot import bot, Var, bot_loop, sch, LOGS, ffQueue, ffLock, ffpids_cache, ff_queued
+from bot import bot, Var, bot_loop, sch, LOGS, ffQueue, ffLock, ffpids_cache, ff_queued, ff_queue_names, ff_queue_order
 from bot.core.auto_animes import fetch_animes
 from bot.core.func_utils import clean_up, new_task, editMessage
 from bot.modules.up_posts import upcoming_animes
@@ -18,7 +18,7 @@ async def restart(client, message):
     if sch.running:
         sch.shutdown(wait=False)
     await clean_up()
-    if len(ffpids_cache) != 0: 
+    if len(ffpids_cache) != 0:
         for pid in ffpids_cache:
             try:
                 LOGS.info(f"Process ID : {pid}")
@@ -39,18 +39,22 @@ async def restart():
             await bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text="<i>Restarted !</i>")
         except Exception as e:
             LOGS.error(e)
-            
+
 async def queue_loop():
     LOGS.info("Queue Loop Started !!")
     while True:
-        if not ffQueue.empty():
-            post_id = await ffQueue.get()
+        if ff_queue_order:
+            post_id = ff_queue_order.pop(0)
+            ff_queue_names.pop(post_id, None)
             await asleep(1.5)
-            ff_queued[post_id].set()
+            if post_id in ff_queued:
+                ff_queued[post_id].set()
             await asleep(1.5)
             async with ffLock:
-                ffQueue.task_done()
-        await asleep(10)
+                if not ffQueue.empty():
+                    await ffQueue.get()
+                    ffQueue.task_done()
+        await asleep(2)
 
 async def main():
     sch.add_job(upcoming_animes, "cron", hour=0, minute=30)
@@ -67,6 +71,6 @@ async def main():
         task.cancel()
     await clean_up()
     LOGS.info('Finished AutoCleanUp !!')
-    
+
 if __name__ == '__main__':
     bot_loop.run_until_complete(main())
