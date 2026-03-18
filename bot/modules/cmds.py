@@ -12,6 +12,7 @@ from bot.core.text_utils import TextEditor
 from bot.core.tordownload import TorDownloader
 from bot.core.auto_animes import get_animes
 from bot.core.reporter import rep
+from bot.modules.up_posts import send_schedule_post
 
 
 # ─── Filter Helpers ───────────────────────────────────────────────────────────
@@ -119,7 +120,8 @@ async def help_cmd(client, message):
         "<b>Anime:</b>\n"
         "/fetch - Toggle auto fetch on/off\n"
         "/addmagnet - Add magnet link manually\n"
-        "/addtorrent - Add torrent file manually\n\n"
+        "/addtorrent - Add torrent file manually\n"
+        "/schedule - Send today's anime schedule to main channel\n\n"
         "<b>Channel Connections:</b>\n"
         "/connect <code>&lt;anime name&gt;</code> - Connect anime to a channel\n"
         "/disconnect <code>&lt;anilist id&gt;</code> - Remove a connection\n"
@@ -493,3 +495,12 @@ async def delanime_cmd(client, message):
 @bot.on_message(command("users") & private & user(Var.ADMINS))
 async def users_cmd(client, message):
     await sendMessage(message, "This feature requires user tracking setup.")
+
+
+# ─── /schedule ────────────────────────────────────────────────────────────────
+
+@bot.on_message(command("schedule") & private & user(Var.ADMINS))
+async def schedule_cmd(client, message):
+    stat = await sendMessage(message, "<i>Fetching today's anime schedule...</i>")
+    await send_schedule_post()
+    await editMessage(stat, "✅ <b>Schedule sent to main channel!</b>")
