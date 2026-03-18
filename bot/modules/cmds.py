@@ -5,7 +5,10 @@ from urllib.parse import unquote
 from pyrogram import filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 
-from bot import bot, Var, ani_cache, LOGS
+from os import kill
+from signal import SIGSTOP, SIGCONT
+
+from bot import bot, Var, ani_cache, LOGS, ffpids_cache, ff_queue_names, ff_queue_order
 from bot.core.database import db
 from bot.core.func_utils import editMessage, sendMessage, encode, decode
 from bot.core.text_utils import TextEditor
@@ -143,6 +146,10 @@ async def help_cmd(client, message):
         "/addmagnet - Add magnet link manually\n"
         "/addtorrent - Add torrent file manually\n"
         "/schedule - Send today's anime schedule to main channel\n\n"
+        "<b>Encoding Control:</b>\n"
+        "/pause - Pause current encoding task\n"
+        "/resume - Resume paused encoding task\n"
+        "/queue - View queue and change priority\n\n"
         "<b>Channel Connections:</b>\n"
         "/connect <code>&lt;anime name&gt;</code> - Connect anime to a channel\n"
         "/disconnect <code>&lt;anilist id&gt;</code> - Remove a connection\n"
@@ -183,6 +190,101 @@ async def fetch_cmd(client, message):
     ani_cache['fetch_animes'] = not ani_cache['fetch_animes']
     state = "✅ Enabled" if ani_cache['fetch_animes'] else "🔴 Disabled"
     await sendMessage(message, f"Auto Fetch: <b>{state}</b>")
+
+
+# ─── /pause ───────────────────────────────────────────────────────────────────
+
+@bot.on_message(command("pause") & private & user(Var.ADMINS))
+async def pause_cmd(client, message):
+    if not ffpids_cache:
+        return await sendMessage(message, "⚠️ <b>No encoding task is currently running.</b>")
+    paused = 0
+    for pid in ffpids_cache:
+        try:
+            kill(pid, SIGSTOP)
+            paused += 1
+        except Exception:
+            pass
+    if paused:
+        await sendMessage(message, "⏸ <b>Encoding paused.</b>\n\nSend /resume to continue.")
+    else:
+        await sendMessage(message, "⚠️ <b>Could not pause. Process may have already finished.</b>")
+
+
+# ─── /resume ──────────────────────────────────────────────────────────────────
+
+@bot.on_message(command("resume") & private & user(Var.ADMINS))
+async def resume_cmd(client, message):
+    if not ffpids_cache:
+        return await sendMessage(message, "⚠️ <b>No encoding task is currently running.</b>")
+    resumed = 0
+    for pid in ffpids_cache:
+        try:
+            kill(pid, SIGCONT)
+            resumed += 1
+        except Exception:
+            pass
+    if resumed:
+        await sendMessage(message, "▶️ <b>Encoding resumed.</b>")
+    else:
+        await sendMessage(message, "⚠️ <b>Could not resume. Process may have already finished.</b>")
+
+
+# ─── /queue ───────────────────────────────────────────────────────────────────
+
+@bot.on_message(command("queue") & private & user(Var.ADMINS))
+async def queue_cmd(client, message):
+    pending = [p for p in ff_queue_order if p in ff_queue_names]
+    if not pending:
+        return await sendMessage(message, "📋 <b>Queue is empty.</b>\n\nNo tasks are waiting.")
+
+    text = "📋 <b>Encoding Queue:</b>\n\n"
+    btn_row = []
+    for i, post_id in enumerate(pending, 1):
+        name = ff_queue_names.get(post_id, f"Task {post_id}")
+        text += f"<b>{i}.</b> <i>{name}</i>\n"
+        btn_row.append(InlineKeyboardButton(str(i), callback_data=f"qpriority_{post_id}"))
+
+    text += "\n<i>Tap a number to move that task to the top and pause the current one.</i>"
+    await sendMessage(message, text, buttons=InlineKeyboardMarkup([btn_row]))
+
+
+# ─── Callback: queue priority ─────────────────────────────────────────────────
+
+@bot.on_callback_query(filters.regex(r"^qpriority_(\d+)$") & user(Var.ADMINS))
+async def queue_priority_cb(client, callback_query):
+    post_id = int(callback_query.matches[0].group(1))
+
+    if post_id not in ff_queue_order:
+        await callback_query.answer("This task is no longer in the queue.", show_alert=True)
+        return
+
+    ff_queue_order.remove(post_id)
+    ff_queue_order.insert(0, post_id)
+
+    for pid in ffpids_cache:
+        try:
+            kill(pid, SIGSTOP)
+        except Exception:
+            pass
+
+    name = ff_queue_names.get(post_id, f"Task {post_id}")
+    await callback_query.answer(f"✅ '{name}' moved to top.\nCurrent task paused.", show_alert=True)
+
+    pending = [p for p in ff_queue_order if p in ff_queue_names]
+    if not pending:
+        await callback_query.edit_message_text("📋 <b>Queue is empty.</b>")
+        return
+
+    text = "📋 <b>Encoding Queue (Updated):</b>\n\n"
+    btn_row = []
+    for i, pid in enumerate(pending, 1):
+        n = ff_queue_names.get(pid, f"Task {pid}")
+        text += f"<b>{i}.</b> <i>{n}</i>\n"
+        btn_row.append(InlineKeyboardButton(str(i), callback_data=f"qpriority_{pid}"))
+
+    text += "\n<i>Tap a number to move that task to the top and pause the current one.</i>"
+    await callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([btn_row]))
 
 
 # ─── /addmagnet ───────────────────────────────────────────────────────────────
