@@ -42,10 +42,26 @@ pending_pic     = {}
 
 # ─── Delete after helper ──────────────────────────────────────────────────────
 
-async def _delete_after(msg, delay):
+async def _replace_after_delete(file_msg, warn_msg, delay, file_name, start_param):
     await asleep(delay)
     try:
-        await msg.delete()
+        await file_msg.delete()
+    except Exception:
+        pass
+    try:
+        me = await bot.get_me()
+        click_url = f"https://t.me/{me.username}?start={start_param}"
+        buttons = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("Click Here", url=click_url),
+                InlineKeyboardButton("Close", callback_data="close_file"),
+            ]
+        ])
+        await warn_msg.edit(
+            f"<b>{file_name}</b>",
+            reply_markup=buttons,
+            disable_web_page_preview=True,
+        )
     except Exception:
         pass
 
@@ -90,11 +106,16 @@ async def start_cmd(client, message):
             msg    = await client.get_messages(Var.FILE_STORE, message_ids=msg_id)
             sent   = await msg.copy(message.chat.id)
             if Var.AUTO_DEL:
-                await sendMessage(
+                warn_msg = await sendMessage(
                     message.chat.id,
-                    f"⚠️ <i>Yeh file <b>{Var.DEL_TIMER} seconds</b> baad delete ho jaayegi.</i>"
+                    f"⚠️ <i>This file will be automatically deleted in <b>{Var.DEL_TIMER} seconds</b>.</i>"
                 )
-                bot.loop.create_task(_delete_after(sent, Var.DEL_TIMER))
+                file_name = (
+                    getattr(sent.document, 'file_name', None)
+                    or getattr(sent.video, 'file_name', None)
+                    or "File"
+                )
+                bot.loop.create_task(_replace_after_delete(sent, warn_msg, Var.DEL_TIMER, file_name, args[1]))
         except Exception:
             await sendMessage(message, "File not found or expired.")
     else:
@@ -317,6 +338,17 @@ async def listpics_page_cb(client, callback_query):
         reply_markup=markup,
         disable_web_page_preview=True
     )
+    await callback_query.answer()
+
+
+# ─── Callback: close auto-delete message ─────────────────────────────────────
+
+@bot.on_callback_query(filters.regex(r"^close_file$"))
+async def close_file_cb(client, callback_query):
+    try:
+        await callback_query.message.delete()
+    except Exception:
+        pass
     await callback_query.answer()
 
 
