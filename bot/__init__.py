@@ -30,6 +30,8 @@ ffpids_cache = list()
 ffLock = Lock()
 ffQueue = Queue()
 ff_queued = dict()
+ff_queue_names = {}
+ff_queue_order = []
 
 class Var:
     API_ID, API_HASH, BOT_TOKEN = getenv("API_ID"), getenv("API_HASH"), getenv("BOT_TOKEN")
