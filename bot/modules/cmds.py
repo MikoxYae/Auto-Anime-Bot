@@ -34,6 +34,7 @@ def user(uid):
 private = filters.private
 
 PICS_PER_PAGE = 10
+VALID_QUALS   = {"360", "480", "720", "1080"}
 
 
 # ─── Pending state dicts ──────────────────────────────────────────────────────
@@ -41,6 +42,7 @@ PICS_PER_PAGE = 10
 pending_connect = {}
 pending_torrent = {}
 pending_pic     = {}
+pending_ffmpeg  = {}
 
 
 # ─── Delete after helper ──────────────────────────────────────────────────────
@@ -150,6 +152,10 @@ async def help_cmd(client, message):
         "/pause - Pause current encoding task\n"
         "/resume - Resume paused encoding task\n"
         "/queue - View queue and change priority\n\n"
+        "<b>FFmpeg Config:</b>\n"
+        "/setffmpeg <code>&lt;quality&gt;</code> - Set FFmpeg command for a quality\n"
+        "/listffmpeg - List all saved FFmpeg configs\n"
+        "/delffmpeg <code>&lt;quality&gt;</code> - Delete a FFmpeg config\n\n"
         "<b>Channel Connections:</b>\n"
         "/connect <code>&lt;anime name&gt;</code> - Connect anime to a channel\n"
         "/disconnect <code>&lt;anilist id&gt;</code> - Remove a connection\n"
@@ -308,6 +314,108 @@ async def queue_priority_cb(client, callback_query):
 
     text += "\n<i>Tap a number to move that task to the top and pause the current one.</i>"
     await callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([btn_row]))
+
+
+# ─── /setffmpeg ───────────────────────────────────────────────────────────────
+
+@bot.on_message(command("setffmpeg") & private & user(Var.ADMINS))
+async def setffmpeg_cmd(client, message):
+    args = message.text.split(maxsplit=1)
+    if len(args) <= 1 or args[1].strip() not in VALID_QUALS:
+        return await sendMessage(
+            message,
+            "Usage: /setffmpeg <code>&lt;quality&gt;</code>\n\n"
+            "Valid: <code>360</code>, <code>480</code>, <code>720</code>, <code>1080</code>\n\n"
+            "Example: /setffmpeg <code>1080</code>"
+        )
+
+    qual = args[1].strip()
+    pending_ffmpeg[message.from_user.id] = qual
+
+    await sendMessage(
+        message,
+        f"✅ Quality: <b>{qual}p</b>\n\n"
+        f"Ab poora FFmpeg command bhejo.\n"
+        f"<code>{{}}</code> placeholders use karo:\n"
+        f"• 1st <code>{{}}</code> = input file\n"
+        f"• 2nd <code>{{}}</code> = progress file\n"
+        f"• 3rd <code>{{}}</code> = output file\n\n"
+        f"<i>Example:</i>\n"
+        f"<code>ffmpeg -i '{{}}' -progress '{{}}' -c:v libx264 -crf 26 -s 1920x1080 '{{}}' -y</code>"
+    )
+
+
+@bot.on_message(filters.text & private & user(Var.ADMINS))
+async def handle_ffmpeg_input(client, message):
+    uid = message.from_user.id
+    if uid not in pending_ffmpeg:
+        return
+    if message.text.startswith("/"):
+        return
+
+    qual    = pending_ffmpeg.pop(uid)
+    cmd_txt = message.text.strip()
+
+    if cmd_txt.count("{}") != 3:
+        return await sendMessage(
+            message,
+            "⚠️ <b>Invalid command.</b>\n\n"
+            "Exactly <b>3</b> <code>{}</code> placeholders chahiye:\n"
+            "input, progress, output.\n\nDobara /setffmpeg try karo."
+        )
+
+    await db.saveFFConfig(qual, cmd_txt)
+    short = cmd_txt[:80] + "..." if len(cmd_txt) > 80 else cmd_txt
+    await sendMessage(
+        message,
+        f"✅ <b>FFmpeg Config Saved!</b>\n\n"
+        f"• <b>Quality:</b> {qual}p\n"
+        f"• <b>Command:</b> <code>{short}</code>"
+    )
+
+
+# ─── /listffmpeg ──────────────────────────────────────────────────────────────
+
+@bot.on_message(command("listffmpeg") & private & user(Var.ADMINS))
+async def listffmpeg_cmd(client, message):
+    configs = await db.getAllFFConfigs()
+
+    if not configs:
+        return await sendMessage(
+            message,
+            "📭 <b>No FFmpeg configs saved.</b>\n\nUse /setffmpeg to add one."
+        )
+
+    text = "🎞 <b>FFmpeg Configs:</b>\n\n"
+    for doc in sorted(configs, key=lambda x: x["_id"]):
+        qual  = doc["_id"]
+        cmd   = doc["command"]
+        short = cmd[:60] + "..." if len(cmd) > 60 else cmd
+        text += f"<b>{qual}p</b>\n<code>{short}</code>\n\n"
+
+    text += "<i>Use /delffmpeg &lt;quality&gt; to remove.</i>"
+    await sendMessage(message, text)
+
+
+# ─── /delffmpeg ───────────────────────────────────────────────────────────────
+
+@bot.on_message(command("delffmpeg") & private & user(Var.ADMINS))
+async def delffmpeg_cmd(client, message):
+    args = message.text.split(maxsplit=1)
+    if len(args) <= 1 or args[1].strip() not in VALID_QUALS:
+        return await sendMessage(
+            message,
+            "Usage: /delffmpeg <code>&lt;quality&gt;</code>\n\n"
+            "Valid: <code>360</code>, <code>480</code>, <code>720</code>, <code>1080</code>"
+        )
+
+    qual = args[1].strip()
+    await db.delFFConfig(qual)
+    await sendMessage(
+        message,
+        f"✅ <b>{qual}p config deleted.</b>\n\n"
+        f"<i>Ab .env wala FFCODE_{qual} fallback use hoga.</i>"
+    )
 
 
 # ─── /addmagnet ───────────────────────────────────────────────────────────────
