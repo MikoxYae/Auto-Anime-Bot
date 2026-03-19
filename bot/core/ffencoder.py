@@ -11,26 +11,38 @@ from bot import Var, bot_loop, ffpids_cache, LOGS
 from .func_utils import mediainfo, convertBytes, convertTime, editMessage
 from .reporter import rep
 
-ffargs = {
+ffargs_default = {
     '1080': Var.FFCODE_1080,
-    '720': Var.FFCODE_720,
-    '480': Var.FFCODE_480,
-    '360': Var.FFCODE_360,
+    '720':  Var.FFCODE_720,
+    '480':  Var.FFCODE_480,
+    '360':  Var.FFCODE_360,
 }
+
+
+async def get_ffcode(qual: str) -> str:
+    try:
+        from .database import db
+        config = await db.getFFConfig(qual)
+        if config:
+            return config
+    except Exception:
+        pass
+    return ffargs_default.get(qual, ffargs_default['720'])
+
 
 class FFEncoder:
     def __init__(self, message, path, name, qual, turn_index=0, total_quals=1):
-        self.__proc = None
-        self.is_cancelled = False
-        self.message = message
-        self.__name = name
-        self.__qual = qual
-        self.dl_path = path
-        self.__total_time = None
-        self.out_path = ospath.join("encode", name)
-        self.__prog_file = f'prog_{self.__qual}.txt'
-        self.__start_time = time()
-        self.__turn_index = turn_index
+        self.__proc        = None
+        self.is_cancelled  = False
+        self.message       = message
+        self.__name        = name
+        self.__qual        = qual
+        self.dl_path       = path
+        self.__total_time  = None
+        self.out_path      = ospath.join("encode", name)
+        self.__prog_file   = f'prog_{self.__qual}.txt'
+        self.__start_time  = time()
+        self.__turn_index  = turn_index
         self.__total_quals = total_quals
 
     def __is_my_turn(self):
@@ -47,13 +59,13 @@ class FFEncoder:
                         text = await p.read()
                     if text:
                         time_done = floor(int(t[-1]) / 1000000) if (t := findall(r"out_time_ms=(\d+)", text)) else 1
-                        ensize = int(s[-1]) if (s := findall(r"total_size=(\d+)", text)) else 0
+                        ensize    = int(s[-1]) if (s := findall(r"total_size=(\d+)", text)) else 0
 
-                        diff = time() - self.__start_time
-                        speed = ensize / diff if diff > 0 else 0
+                        diff    = time() - self.__start_time
+                        speed   = ensize / diff if diff > 0 else 0
                         percent = round((time_done / self.__total_time) * 100, 2)
-                        tsize = ensize / (max(percent, 0.01) / 100)
-                        eta = (tsize - ensize) / max(speed, 0.01)
+                        tsize   = ensize / (max(percent, 0.01) / 100)
+                        eta     = (tsize - ensize) / max(speed, 0.01)
 
                         bar = floor(percent / 8) * "█" + (12 - floor(percent / 8)) * "▒"
 
@@ -82,7 +94,9 @@ class FFEncoder:
             pass
 
         out_npath = ospath.join("encode", f"ffanimeadvout_{self.__qual}.mkv")
-        ffcode = ffargs[self.__qual].format(self.dl_path, self.__prog_file, out_npath)
+
+        ffcode = await get_ffcode(self.__qual)
+        ffcode = ffcode.format(self.dl_path, self.__prog_file, out_npath)
 
         LOGS.info(f'FFCode [{self.__qual}p]: {ffcode}')
         self.__proc = await create_subprocess_shell(ffcode, stdout=PIPE, stderr=PIPE)
@@ -110,5 +124,5 @@ class FFEncoder:
         if self.__proc is not None:
             try:
                 self.__proc.kill()
-            except:
+            except Exception:
                 pass
