@@ -81,9 +81,9 @@ def _build_pics_page(all_pics, page):
     page_items  = all_pics[start:end]
 
     if not page_items:
-        return "<b>Koi custom pic set nahi hai.</b>", None
+        return "<b>No custom pic set.</b>", None
 
-    text = f"<b>🖼 Custom Pics — Page {page + 1}/{total_pages} ({total} total):</b>\n\n"
+    text = f"<b>Custom Pics — Page {page + 1}/{total_pages} ({total} total):</b>\n\n"
     for i, item in enumerate(page_items, start + 1):
         name   = item.get('ani_name_pic') or 'Unknown'
         ani_id = item['_id']
@@ -91,9 +91,9 @@ def _build_pics_page(all_pics, page):
 
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"listpics_{page - 1}"))
+        nav.append(InlineKeyboardButton("Prev", callback_data=f"listpics_{page - 1}"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"listpics_{page + 1}"))
+        nav.append(InlineKeyboardButton("Next", callback_data=f"listpics_{page + 1}"))
 
     markup = InlineKeyboardMarkup([nav]) if nav else None
     return text, markup
@@ -120,7 +120,9 @@ async def start_cmd(client, message):
                     or getattr(sent.video, 'file_name', None)
                     or "File"
                 )
-                bot.loop.create_task(_replace_after_delete(sent, warn_msg, Var.DEL_TIMER, file_name, args[1]))
+                bot.loop.create_task(
+                    _replace_after_delete(sent, warn_msg, Var.DEL_TIMER, file_name, args[1])
+                )
         except Exception:
             await sendMessage(message, "File not found or expired.")
     else:
@@ -153,7 +155,7 @@ async def help_cmd(client, message):
         "/resume - Resume paused encoding task\n"
         "/queue - View queue and change priority\n\n"
         "<b>FFmpeg Config:</b>\n"
-        "/setffmpeg <code>&lt;quality&gt;</code> - Set FFmpeg command for a quality\n"
+        "/setffmpeg <code>&lt;quality&gt;</code> - Set custom FFmpeg command\n"
         "/listffmpeg - List all saved FFmpeg configs\n"
         "/delffmpeg <code>&lt;quality&gt;</code> - Delete a FFmpeg config\n\n"
         "<b>Channel Connections:</b>\n"
@@ -174,7 +176,7 @@ async def help_cmd(client, message):
 
 @bot.on_message(command("status") & private & user(Var.ADMINS))
 async def status_cmd(client, message):
-    fetch_status = "✅ Running" if ani_cache['fetch_animes'] else "🔴 Stopped"
+    fetch_status = "Running" if ani_cache['fetch_animes'] else "Stopped"
     ongoing      = len(ani_cache['ongoing'])
     completed    = len(ani_cache['completed'])
     connections  = await db.getAllConnections()
@@ -194,7 +196,7 @@ async def status_cmd(client, message):
 @bot.on_message(command("fetch") & private & user(Var.ADMINS))
 async def fetch_cmd(client, message):
     ani_cache['fetch_animes'] = not ani_cache['fetch_animes']
-    state = "✅ Enabled" if ani_cache['fetch_animes'] else "🔴 Disabled"
+    state = "Enabled" if ani_cache['fetch_animes'] else "Disabled"
     await sendMessage(message, f"Auto Fetch: <b>{state}</b>")
 
 
@@ -203,7 +205,7 @@ async def fetch_cmd(client, message):
 @bot.on_message(command("pause") & private & user(Var.ADMINS))
 async def pause_cmd(client, message):
     if not ffpids_cache:
-        return await sendMessage(message, "⚠️ <b>No encoding task is currently running.</b>")
+        return await sendMessage(message, "<b>No encoding task is currently running.</b>")
 
     paused = 0
     for pid in ffpids_cache:
@@ -214,19 +216,19 @@ async def pause_cmd(client, message):
             pass
 
     if not paused:
-        return await sendMessage(message, "⚠️ <b>Could not pause. Process may have already finished.</b>")
+        return await sendMessage(message, "<b>Could not pause. Process may have already finished.</b>")
 
     pending = [p for p in ff_queue_order if p in ff_queue_names]
 
     if not pending:
         return await sendMessage(
             message,
-            "⏸ <b>Encoding paused.</b>\n\n"
+            "<b>Encoding paused.</b>\n\n"
             "No tasks are waiting in queue.\n"
             "Send /resume to continue current task."
         )
 
-    text = "⏸ <b>Encoding Paused!</b>\n\n📋 <b>Queue — Choose which anime to run next:</b>\n\n"
+    text = "<b>Encoding Paused!</b>\n\n<b>Queue — Choose which anime to run next:</b>\n\n"
     btn_row = []
     for i, post_id in enumerate(pending, 1):
         name = ff_queue_names.get(post_id, f"Task {post_id}")
@@ -242,7 +244,7 @@ async def pause_cmd(client, message):
 @bot.on_message(command("resume") & private & user(Var.ADMINS))
 async def resume_cmd(client, message):
     if not ffpids_cache:
-        return await sendMessage(message, "⚠️ <b>No encoding task is currently running.</b>")
+        return await sendMessage(message, "<b>No encoding task is currently running.</b>")
     resumed = 0
     for pid in ffpids_cache:
         try:
@@ -251,9 +253,9 @@ async def resume_cmd(client, message):
         except Exception:
             pass
     if resumed:
-        await sendMessage(message, "▶️ <b>Encoding resumed.</b>")
+        await sendMessage(message, "<b>Encoding resumed.</b>")
     else:
-        await sendMessage(message, "⚠️ <b>Could not resume. Process may have already finished.</b>")
+        await sendMessage(message, "<b>Could not resume. Process may have already finished.</b>")
 
 
 # ─── /queue ───────────────────────────────────────────────────────────────────
@@ -262,16 +264,16 @@ async def resume_cmd(client, message):
 async def queue_cmd(client, message):
     pending = [p for p in ff_queue_order if p in ff_queue_names]
     if not pending:
-        return await sendMessage(message, "📋 <b>Queue is empty.</b>\n\nNo tasks are waiting.")
+        return await sendMessage(message, "<b>Queue is empty.</b>\n\nNo tasks are waiting.")
 
-    text = "📋 <b>Encoding Queue:</b>\n\n"
+    text = "<b>Encoding Queue:</b>\n\n"
     btn_row = []
     for i, post_id in enumerate(pending, 1):
         name = ff_queue_names.get(post_id, f"Task {post_id}")
         text += f"<b>{i}.</b> <i>{name}</i>\n"
         btn_row.append(InlineKeyboardButton(str(i), callback_data=f"qpriority_{post_id}"))
 
-    text += "\n<i>Tap a number to move that task to the top and pause the current one.</i>"
+    text += "\n<i>Tap a number to move that task to the top.</i>"
     await sendMessage(message, text, buttons=InlineKeyboardMarkup([btn_row]))
 
 
@@ -296,23 +298,23 @@ async def queue_priority_cb(client, callback_query):
 
     name = ff_queue_names.get(post_id, f"Task {post_id}")
     await callback_query.answer(
-        f"✅ '{name}' set as next.\nCurrent task resumed — it will finish first, then your selection runs.",
+        f"'{name}' set as next. Current task resumed — it will finish first, then your selection runs.",
         show_alert=True
     )
 
     pending = [p for p in ff_queue_order if p in ff_queue_names]
     if not pending:
-        await callback_query.edit_message_text("📋 <b>Queue is empty.</b>")
+        await callback_query.edit_message_text("<b>Queue is empty.</b>")
         return
 
-    text = "📋 <b>Encoding Queue (Updated):</b>\n\n"
+    text = "<b>Encoding Queue (Updated):</b>\n\n"
     btn_row = []
     for i, pid in enumerate(pending, 1):
         n = ff_queue_names.get(pid, f"Task {pid}")
         text += f"<b>{i}.</b> <i>{n}</i>\n"
         btn_row.append(InlineKeyboardButton(str(i), callback_data=f"qpriority_{pid}"))
 
-    text += "\n<i>Tap a number to move that task to the top and pause the current one.</i>"
+    text += "\n<i>Tap a number to move that task to the top.</i>"
     await callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([btn_row]))
 
 
@@ -325,8 +327,8 @@ async def setffmpeg_cmd(client, message):
         return await sendMessage(
             message,
             "Usage: /setffmpeg <code>&lt;quality&gt;</code>\n\n"
-            "Valid: <code>360</code>, <code>480</code>, <code>720</code>, <code>1080</code>\n\n"
-            "Example: /setffmpeg <code>1080</code>"
+            "Valid qualities: <code>360</code>, <code>480</code>, <code>720</code>, <code>1080</code>\n\n"
+            "Example: <code>/setffmpeg 1080</code>"
         )
 
     qual = args[1].strip()
@@ -334,9 +336,9 @@ async def setffmpeg_cmd(client, message):
 
     await sendMessage(
         message,
-        f"✅ Quality: <b>{qual}p</b>\n\n"
-        f"Ab poora FFmpeg command bhejo.\n"
-        f"<code>{{}}</code> placeholders use karo:\n"
+        f"Quality selected: <b>{qual}p</b>\n\n"
+        f"Now send the full FFmpeg command.\n"
+        f"Use <code>{{}}</code> as placeholders:\n"
         f"• 1st <code>{{}}</code> = input file\n"
         f"• 2nd <code>{{}}</code> = progress file\n"
         f"• 3rd <code>{{}}</code> = output file\n\n"
@@ -345,12 +347,14 @@ async def setffmpeg_cmd(client, message):
     )
 
 
-@bot.on_message(filters.text & private & user(Var.ADMINS))
+# ─── FFmpeg text input handler ────────────────────────────────────────────────
+# NOTE: filters.regex(r'^[^/]') ensures command messages (starting with /)
+#       never trigger this handler — fixes all-commands-broken bug.
+
+@bot.on_message(filters.text & filters.regex(r'^[^/]') & private & user(Var.ADMINS))
 async def handle_ffmpeg_input(client, message):
     uid = message.from_user.id
     if uid not in pending_ffmpeg:
-        return
-    if message.text.startswith("/"):
         return
 
     qual    = pending_ffmpeg.pop(uid)
@@ -359,16 +363,16 @@ async def handle_ffmpeg_input(client, message):
     if cmd_txt.count("{}") != 3:
         return await sendMessage(
             message,
-            "⚠️ <b>Invalid command.</b>\n\n"
-            "Exactly <b>3</b> <code>{}</code> placeholders chahiye:\n"
-            "input, progress, output.\n\nDobara /setffmpeg try karo."
+            "<b>Invalid command.</b>\n\n"
+            "Exactly <b>3</b> <code>{}</code> placeholders needed: input, progress, output.\n\n"
+            "Try /setffmpeg again."
         )
 
     await db.saveFFConfig(qual, cmd_txt)
     short = cmd_txt[:80] + "..." if len(cmd_txt) > 80 else cmd_txt
     await sendMessage(
         message,
-        f"✅ <b>FFmpeg Config Saved!</b>\n\n"
+        f"<b>FFmpeg Config Saved!</b>\n\n"
         f"• <b>Quality:</b> {qual}p\n"
         f"• <b>Command:</b> <code>{short}</code>"
     )
@@ -383,17 +387,17 @@ async def listffmpeg_cmd(client, message):
     if not configs:
         return await sendMessage(
             message,
-            "📭 <b>No FFmpeg configs saved.</b>\n\nUse /setffmpeg to add one."
+            "<b>No FFmpeg configs saved.</b>\n\nUse /setffmpeg to add one."
         )
 
-    text = "🎞 <b>FFmpeg Configs:</b>\n\n"
+    text = "<b>FFmpeg Configs:</b>\n\n"
     for doc in sorted(configs, key=lambda x: x["_id"]):
         qual  = doc["_id"]
         cmd   = doc["command"]
         short = cmd[:60] + "..." if len(cmd) > 60 else cmd
         text += f"<b>{qual}p</b>\n<code>{short}</code>\n\n"
 
-    text += "<i>Use /delffmpeg &lt;quality&gt; to remove.</i>"
+    text += "<i>Use /delffmpeg &lt;quality&gt; to remove a config.</i>"
     await sendMessage(message, text)
 
 
@@ -406,15 +410,15 @@ async def delffmpeg_cmd(client, message):
         return await sendMessage(
             message,
             "Usage: /delffmpeg <code>&lt;quality&gt;</code>\n\n"
-            "Valid: <code>360</code>, <code>480</code>, <code>720</code>, <code>1080</code>"
+            "Valid qualities: <code>360</code>, <code>480</code>, <code>720</code>, <code>1080</code>"
         )
 
     qual = args[1].strip()
     await db.delFFConfig(qual)
     await sendMessage(
         message,
-        f"✅ <b>{qual}p config deleted.</b>\n\n"
-        f"<i>Ab .env wala FFCODE_{qual} fallback use hoga.</i>"
+        f"<b>{qual}p config deleted.</b>\n\n"
+        f"<i>Bot will now use the .env fallback for {qual}p.</i>"
     )
 
 
@@ -496,9 +500,9 @@ async def addpic_cmd(client, message):
 
     await editMessage(
         stat,
-        f"✅ <b>Anime Found:</b> <i>{display_name}</i>\n"
+        f"<b>Anime Found:</b> <i>{display_name}</i>\n"
         f"<b>AniList ID:</b> <code>{ani_id}</code>\n\n"
-        f"Ab <b>picture send karo</b> jo is anime ke liye set karni hai."
+        f"Now send the <b>picture</b> you want to set for this anime."
     )
 
 
@@ -517,10 +521,9 @@ async def handle_pic(client, message):
 
     await sendMessage(
         message,
-        f"✅ <b>Picture Set Successfully!</b>\n\n"
+        f"<b>Picture Set Successfully!</b>\n\n"
         f"• <b>Anime:</b> {info['ani_name']}\n"
-        f"• <b>AniList ID:</b> <code>{info['ani_id']}</code>\n\n"
-        f"<i>Ab se is anime ke liye yeh picture use hogi.</i>"
+        f"• <b>AniList ID:</b> <code>{info['ani_id']}</code>"
     )
 
 
@@ -540,8 +543,8 @@ async def delpic_cmd(client, message):
     await db.delAnimePic(ani_id)
     await sendMessage(
         message,
-        f"✅ Custom picture removed for <code>{ani_id}</code>.\n\n"
-        f"<i>AniList default poster use hoga ab se.</i>"
+        f"Custom picture removed for <code>{ani_id}</code>.\n\n"
+        f"<i>AniList default poster will be used now.</i>"
     )
 
 
@@ -552,13 +555,13 @@ async def listpics_cmd(client, message):
     all_pics = await db.getAllAnimePics()
 
     if not all_pics:
-        return await sendMessage(message, "Koi custom pic set nahi hai.\n\nUse /addpic to add one.")
+        return await sendMessage(message, "No custom pics set.\n\nUse /addpic to add one.")
 
     text, markup = _build_pics_page(all_pics, 0)
     await sendMessage(message, text, buttons=markup)
 
 
-# ─── Callback: listpics pagination ───────────────────────────────────────────
+# ─── Callback: listpics pagination ────────────────────────────────────────────
 
 @bot.on_callback_query(filters.regex(r"^listpics_(\d+)$") & user(Var.ADMINS))
 async def listpics_page_cb(client, callback_query):
@@ -574,7 +577,7 @@ async def listpics_page_cb(client, callback_query):
     await callback_query.answer()
 
 
-# ─── Callback: close auto-delete message ─────────────────────────────────────
+# ─── Callback: close auto-delete message ──────────────────────────────────────
 
 @bot.on_callback_query(filters.regex(r"^close_file$"))
 async def close_file_cb(client, callback_query):
@@ -620,7 +623,7 @@ async def connect_cmd(client, message):
 
     await editMessage(
         stat,
-        f"✅ <b>Anime Found:</b> <i>{display_name}</i>\n"
+        f"<b>Anime Found:</b> <i>{display_name}</i>\n"
         f"<b>AniList ID:</b> <code>{ani_id}</code>\n\n"
         f"Now <b>forward any message</b> from the channel you want to connect.\n"
         f"<i>(Bot must be admin in that channel)</i>"
@@ -666,7 +669,7 @@ async def handle_forward(client, message):
 
     await sendMessage(
         message,
-        f"✅ <b>Channel Connected Successfully!</b>\n\n"
+        f"<b>Channel Connected Successfully!</b>\n\n"
         f"• <b>Anime:</b> {ani_info['ani_name']}\n"
         f"• <b>AniList ID:</b> <code>{ani_info['ani_id']}</code>\n"
         f"• <b>Channel:</b> {channel_name}\n"
@@ -703,7 +706,7 @@ async def disconnect_cmd(client, message):
     await db.disconnectChannel(ani_id)
     await sendMessage(
         message,
-        f"✅ <b>Disconnected!</b>\n\n"
+        f"<b>Disconnected!</b>\n\n"
         f"• <b>Anime:</b> {conn.get('ani_name', 'Unknown')}\n"
         f"• <b>Channel:</b> {conn.get('channel_name', 'Unknown')}\n\n"
         f"<i>This anime will now upload to main channel.</i>"
@@ -726,9 +729,9 @@ async def connections_cmd(client, message):
     for i, conn in enumerate(all_conn, 1):
         text += (
             f"{i}. <b>{conn.get('ani_name', 'Unknown')}</b>\n"
-            f"   ├ <b>AniList ID:</b> <code>{conn['_id']}</code>\n"
-            f"   ├ <b>Channel:</b> {conn.get('channel_name', 'Unknown')}\n"
-            f"   └ <b>Link:</b> {conn.get('invite_link', 'N/A')}\n\n"
+            f"   AniList ID: <code>{conn['_id']}</code>\n"
+            f"   Channel: {conn.get('channel_name', 'Unknown')}\n"
+            f"   Link: {conn.get('invite_link', 'N/A')}\n\n"
         )
 
     text += "<i>Use /disconnect &lt;anilist id&gt; to remove a connection.</i>"
@@ -752,7 +755,7 @@ async def delanime_cmd(client, message):
     ani_cache['completed'].discard(ani_id)
     ani_cache['ongoing'].discard(ani_id)
 
-    await sendMessage(message, f"✅ Anime <code>{ani_id}</code> deleted from database.")
+    await sendMessage(message, f"Anime <code>{ani_id}</code> deleted from database.")
 
 
 # ─── /users ───────────────────────────────────────────────────────────────────
@@ -768,4 +771,4 @@ async def users_cmd(client, message):
 async def schedule_cmd(client, message):
     stat = await sendMessage(message, "<i>Fetching today's anime schedule...</i>")
     await send_schedule_post()
-    await editMessage(stat, "✅ <b>Schedule sent to main channel!</b>")
+    await editMessage(stat, "<b>Schedule sent to main channel!</b>")
