@@ -11,7 +11,7 @@ from bot import Var, bot_loop, ffpids_cache, LOGS
 from .func_utils import mediainfo, convertBytes, convertTime, editMessage
 from .reporter import rep
 
-ffargs_default = {
+ffargs = {
     '1080': Var.FFCODE_1080,
     '720':  Var.FFCODE_720,
     '480':  Var.FFCODE_480,
@@ -27,7 +27,7 @@ async def get_ffcode(qual: str) -> str:
             return config
     except Exception:
         pass
-    return ffargs_default.get(qual, ffargs_default['720'])
+    return ffargs.get(qual, ffargs['720'])
 
 
 class FFEncoder:
