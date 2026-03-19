@@ -27,7 +27,9 @@ async def fetch_animes():
     while True:
         await asleep(60)
         if ani_cache['fetch_animes']:
-            for link in Var.RSS_ITEMS:
+            db_rss = await db.getAllRSS()
+            rss_links = db_rss if db_rss else Var.RSS_ITEMS
+            for link in rss_links:
                 if (info := await getfeed(link, 0)):
                     bot_loop.create_task(get_animes(info.title, info.link))
 
