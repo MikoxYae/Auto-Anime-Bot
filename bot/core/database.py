@@ -11,6 +11,7 @@ class MongoDB:
         self.__db          = self.__client[database_name]
         self.__animes      = self.__db.animes[_token.split(':')[0]]
         self.__connections = self.__db.channel_connections[_token.split(':')[0]]
+        self.__ffconfigs   = self.__db.ffconfigs[_token.split(':')[0]]
         self.__quals       = _quals
 
     # ─── Anime Methods ────────────────────────────────────────────────────────
@@ -92,6 +93,25 @@ class MongoDB:
 
     async def getAllConnections(self):
         return await self.__connections.find({}).to_list(length=None)
+
+    # ─── FFmpeg Config Methods ────────────────────────────────────────────────
+
+    async def saveFFConfig(self, qual: str, command: str):
+        await self.__ffconfigs.update_one(
+            {'_id': qual},
+            {'$set': {'command': command}},
+            upsert=True
+        )
+
+    async def getFFConfig(self, qual: str):
+        doc = await self.__ffconfigs.find_one({'_id': qual})
+        return doc['command'] if doc else None
+
+    async def getAllFFConfigs(self):
+        return await self.__ffconfigs.find({}).to_list(length=None)
+
+    async def delFFConfig(self, qual: str):
+        await self.__ffconfigs.delete_one({'_id': qual})
 
 
 _mongo_uri = os.environ.get("MONGO_URI", "")
