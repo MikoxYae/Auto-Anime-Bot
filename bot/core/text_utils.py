@@ -4,11 +4,60 @@ from random import choice
 from asyncio import sleep as asleep
 from aiohttp import ClientSession
 from anitopy import parse
+from os import environ
 
 from bot import Var, bot
 from .ffencoder import ffargs
 from .func_utils import handle_logs
 from .reporter import rep
+
+_short_title_cache: dict = {}
+
+async def ai_short_title(title: str, max_len: int = 20) -> str:
+    if title in _short_title_cache:
+        return _short_title_cache[title]
+    if len(title) <= max_len:
+        return title
+    base_url = environ.get("AI_INTEGRATIONS_OPENAI_BASE_URL", "").rstrip("/")
+    api_key  = environ.get("AI_INTEGRATIONS_OPENAI_API_KEY", "")
+    if base_url:
+        try:
+            async with ClientSession() as sess:
+                async with sess.post(
+                    f"{base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "gpt-5-nano",
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": (
+                                    f"Shorten the anime title to at most {max_len} characters. "
+                                    "Keep it recognizable. "
+                                    "Reply with ONLY the short title — no quotes, no explanation."
+                                ),
+                            },
+                            {"role": "user", "content": title},
+                        ],
+                        "max_completion_tokens": 20,
+                    },
+                    timeout=5,
+                ) as resp:
+                    if resp.status == 200:
+                        data   = await resp.json()
+                        result = data["choices"][0]["message"]["content"].strip().strip('"').strip("'")
+                        if result and len(result) <= max_len + 4:
+                            _short_title_cache[title] = result
+                            return result
+        except Exception:
+            pass
+    fallback = title[:max_len].strip() + ".."
+    _short_title_cache[title] = fallback
+    return fallback
+
 
 CAPTION_FORMAT = """
 <b>㊂ <i>{title}</i></b>
@@ -202,7 +251,9 @@ class TextEditor:
         anime_season = str(ani_s[-1]) if (ani_s := self.pdata.get('anime_season', '01')) and isinstance(ani_s, list) else str(ani_s)
         if anime_name and self.pdata.get("episode_number"):
             titles = self.adata.get('title', {})
-            return f"""[S{anime_season}-{'E'+str(self.pdata.get('episode_number')) if self.pdata.get('episode_number') else ''}] {titles.get('english') or titles.get('romaji') or titles.get('native')} {'['+qual+'p]' if qual else ''} {'['+codec.upper()+'] ' if codec else ''}{'['+lang+']'} {Var.BRAND_UNAME}.mkv"""
+            raw_title = titles.get('english') or titles.get('romaji') or titles.get('native') or anime_name
+            short_title = await ai_short_title(raw_title)
+            return f"""[S{anime_season}-{'E'+str(self.pdata.get('episode_number')) if self.pdata.get('episode_number') else ''}] {short_title} {'['+qual+'p]' if qual else ''} {'['+codec.upper()+'] ' if codec else ''}{'['+lang+']'} {Var.BRAND_UNAME}.mkv"""
 
     @handle_logs
     async def get_caption(self):
