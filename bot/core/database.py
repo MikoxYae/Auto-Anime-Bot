@@ -12,6 +12,7 @@ class MongoDB:
         self.__animes      = self.__db.animes[_token.split(':')[0]]
         self.__connections = self.__db.channel_connections[_token.split(':')[0]]
         self.__ffconfigs   = self.__db.ffconfigs[_token.split(':')[0]]
+        self.__rssfeeds    = self.__db.rssfeeds[_token.split(':')[0]]
         self.__quals       = _quals
 
     # ─── Anime Methods ────────────────────────────────────────────────────────
@@ -112,6 +113,23 @@ class MongoDB:
 
     async def delFFConfig(self, qual: str):
         await self.__ffconfigs.delete_one({'_id': qual})
+
+    # ─── RSS Feed Methods ─────────────────────────────────────────────────────
+
+    async def addRSS(self, url: str) -> bool:
+        existing = await self.__rssfeeds.find_one({'_id': url})
+        if existing:
+            return False
+        await self.__rssfeeds.insert_one({'_id': url})
+        return True
+
+    async def delRSS(self, url: str) -> bool:
+        result = await self.__rssfeeds.delete_one({'_id': url})
+        return result.deleted_count > 0
+
+    async def getAllRSS(self) -> list:
+        docs = await self.__rssfeeds.find({}).to_list(length=None)
+        return [doc['_id'] for doc in docs]
 
 
 _mongo_uri = os.environ.get("MONGO_URI", "")
