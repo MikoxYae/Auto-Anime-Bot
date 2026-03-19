@@ -44,17 +44,24 @@ async def queue_loop():
     LOGS.info("Queue Loop Started !!")
     while True:
         if ff_queue_order:
+            while ffLock.locked():
+                await asleep(1)
+
             post_id = ff_queue_order.pop(0)
             ff_queue_names.pop(post_id, None)
-            await asleep(1.5)
+
+            try:
+                ffQueue.get_nowait()
+                ffQueue.task_done()
+            except Exception:
+                pass
+
             if post_id in ff_queued:
                 ff_queued[post_id].set()
-            await asleep(1.5)
-            async with ffLock:
-                if not ffQueue.empty():
-                    await ffQueue.get()
-                    ffQueue.task_done()
-        await asleep(2)
+
+            await asleep(3)
+        else:
+            await asleep(2)
 
 async def main():
     sch.add_job(upcoming_animes, "cron", hour=0, minute=30)
