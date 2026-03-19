@@ -168,7 +168,11 @@ async def help_cmd(client, message):
         "/listpics - List all anime with custom pics\n\n"
         "<b>Database:</b>\n"
         "/delanime <code>&lt;anilist id&gt;</code> - Delete anime data from DB\n"
-        "/users - Total bot users"
+        "/users - Total bot users\n\n"
+        "<b>RSS Feeds:</b>\n"
+        "/addrss <code>&lt;url&gt;</code> - Add a custom RSS feed URL\n"
+        "/delrss <code>&lt;url&gt;</code> - Remove a saved RSS feed URL\n"
+        "/listrss - List all saved RSS feeds (shows .env default if none saved)"
     )
 
 
@@ -763,6 +767,95 @@ async def delanime_cmd(client, message):
 @bot.on_message(command("users") & private & user(Var.ADMINS))
 async def users_cmd(client, message):
     await sendMessage(message, "This feature requires user tracking setup.")
+
+
+# ─── /addrss ──────────────────────────────────────────────────────────────────
+
+@bot.on_message(command("addrss") & private & user(Var.ADMINS))
+async def addrss_cmd(client, message):
+    args = message.text.split(maxsplit=1)
+    if len(args) <= 1:
+        return await sendMessage(
+            message,
+            "Usage: /addrss <code>&lt;url&gt;</code>\n\n"
+            "Example:\n"
+            "<code>/addrss https://subsplease.org/rss/?r=1080</code>"
+        )
+
+    url = args[1].strip()
+    if not url.startswith("http"):
+        return await sendMessage(message, "<b>Invalid URL.</b> Must start with <code>http</code>.")
+
+    added = await db.addRSS(url)
+    if not added:
+        return await sendMessage(
+            message,
+            f"<b>Already exists!</b>\n\n"
+            f"<code>{url}</code>\n\n"
+            f"<i>This RSS feed is already saved.</i>"
+        )
+
+    await sendMessage(
+        message,
+        f"<b>RSS Feed Added!</b>\n\n"
+        f"<code>{url}</code>\n\n"
+        f"<i>This feed will be used instead of .env default (if any feeds are saved).</i>"
+    )
+
+
+# ─── /delrss ──────────────────────────────────────────────────────────────────
+
+@bot.on_message(command("delrss") & private & user(Var.ADMINS))
+async def delrss_cmd(client, message):
+    args = message.text.split(maxsplit=1)
+    if len(args) <= 1:
+        return await sendMessage(
+            message,
+            "Usage: /delrss <code>&lt;url&gt;</code>\n\n"
+            "Use /listrss to see saved feed URLs."
+        )
+
+    url = args[1].strip()
+    deleted = await db.delRSS(url)
+
+    if not deleted:
+        return await sendMessage(
+            message,
+            f"<b>Not found!</b>\n\n"
+            f"<code>{url}</code>\n\n"
+            f"<i>No saved RSS feed with that URL. Use /listrss to check.</i>"
+        )
+
+    await sendMessage(
+        message,
+        f"<b>RSS Feed Removed!</b>\n\n"
+        f"<code>{url}</code>\n\n"
+        f"<i>If no feeds remain, bot will fall back to .env default.</i>"
+    )
+
+
+# ─── /listrss ─────────────────────────────────────────────────────────────────
+
+@bot.on_message(command("listrss") & private & user(Var.ADMINS))
+async def listrss_cmd(client, message):
+    db_rss = await db.getAllRSS()
+
+    if not db_rss:
+        default_list = "\n".join(f"<code>{u}</code>" for u in Var.RSS_ITEMS)
+        return await sendMessage(
+            message,
+            "<b>No custom RSS feeds saved.</b>\n\n"
+            "<b>Using .env default(s):</b>\n"
+            f"{default_list}\n\n"
+            "<i>Use /addrss &lt;url&gt; to add a custom feed.</i>"
+        )
+
+    text = f"<b>Saved RSS Feeds ({len(db_rss)}):</b>\n\n"
+    for i, url in enumerate(db_rss, 1):
+        text += f"{i}. <code>{url}</code>\n\n"
+
+    text += "<i>Use /delrss &lt;url&gt; to remove a feed.</i>"
+    await sendMessage(message, text)
 
 
 # ─── /schedule ────────────────────────────────────────────────────────────────
