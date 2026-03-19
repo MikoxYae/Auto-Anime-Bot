@@ -1,4 +1,4 @@
-from os import path as ospath, listdir
+from os import path as ospath, listdir, walk
 from aiofiles import open as aiopen
 from aiofiles.os import path as aiopath, remove as aioremove, mkdir
 
@@ -6,6 +6,26 @@ from aiohttp import ClientSession
 from torrentp import TorrentDownloader as _TorrentDownloader
 from bot import LOGS
 from bot.core.func_utils import handle_logs
+
+VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.webm', '.flv', '.m4v'}
+
+
+def _find_video_in_dir(directory):
+    best = None
+    best_size = -1
+    for root, dirs, files in walk(directory):
+        for fname in files:
+            ext = ospath.splitext(fname)[1].lower()
+            if ext in VIDEO_EXTS:
+                fpath = ospath.join(root, fname)
+                try:
+                    size = ospath.getsize(fpath)
+                except OSError:
+                    size = 0
+                if size > best_size:
+                    best_size = size
+                    best = fpath
+    return best
 
 
 class TorDownloader:
@@ -28,11 +48,24 @@ class TorDownloader:
             return None
 
         after = set(listdir(self.__downdir))
-        new_files = after - before
-        if new_files:
-            actual_name = new_files.pop()
-            LOGS.info(f"Downloaded file detected: {actual_name}")
-            return ospath.join(self.__downdir, actual_name)
+        new_entries = after - before
+
+        if new_entries:
+            entry_name = new_entries.pop()
+            entry_path = ospath.join(self.__downdir, entry_name)
+
+            # If it's a directory (multi-file torrent), find the video inside
+            if ospath.isdir(entry_path):
+                video = _find_video_in_dir(entry_path)
+                if video:
+                    LOGS.info(f"Downloaded video found in folder: {video}")
+                    return video
+                LOGS.warning(f"No video file found inside folder: {entry_path}")
+                return entry_path
+
+            # Single file torrent
+            LOGS.info(f"Downloaded file detected: {entry_path}")
+            return entry_path
 
         LOGS.warning("Could not detect downloaded file, falling back to dn= name")
         return ospath.join(self.__downdir, name) if name else None
