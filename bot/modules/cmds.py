@@ -34,6 +34,18 @@ def user(uid):
 
 private = filters.private
 
+
+async def _admin_or_subadmin_check(_, __, update):
+    from_user = getattr(update, 'from_user', None)
+    if not from_user:
+        return False
+    uid = from_user.id
+    if uid in Var.ADMINS:
+        return True
+    return await db.isSubAdmin(uid)
+
+admin_or_subadmin = filters.create(_admin_or_subadmin_check)
+
 PICS_PER_PAGE = 10
 VALID_QUALS   = {"360", "480", "720", "1080"}
 
@@ -136,6 +148,8 @@ async def start_cmd(client, message):
         except Exception:
             await sendMessage(message, "File not found or expired.")
     else:
+        if not await check_fsub(client, message):
+            return
         await sendMessage(
             message,
             f"<b>Hello {message.from_user.mention}!</b>\n\nI am <b>Auto Anime Bot</b>.\n"
@@ -146,7 +160,7 @@ async def start_cmd(client, message):
 
 # ─── /help ────────────────────────────────────────────────────────────────────
 
-@bot.on_message(command("help") & private & user(Var.ADMINS))
+@bot.on_message(command("help") & private & admin_or_subadmin)
 async def help_cmd(client, message):
     await sendMessage(
         message,
@@ -200,7 +214,7 @@ async def help_cmd(client, message):
 
 # ─── /status ──────────────────────────────────────────────────────────────────
 
-@bot.on_message(command("status") & private & user(Var.ADMINS))
+@bot.on_message(command("status") & private & admin_or_subadmin)
 async def status_cmd(client, message):
     fetch_status = "Running" if ani_cache['fetch_animes'] else "Stopped"
     ongoing      = len(ani_cache['ongoing'])
@@ -221,7 +235,7 @@ async def status_cmd(client, message):
 
 # ─── /fetch ───────────────────────────────────────────────────────────────────
 
-@bot.on_message(command("fetch") & private & user(Var.ADMINS))
+@bot.on_message(command("fetch") & private & admin_or_subadmin)
 async def fetch_cmd(client, message):
     ani_cache['fetch_animes'] = not ani_cache['fetch_animes']
     state = "Enabled" if ani_cache['fetch_animes'] else "Disabled"
@@ -230,7 +244,7 @@ async def fetch_cmd(client, message):
 
 # ─── /pause ───────────────────────────────────────────────────────────────────
 
-@bot.on_message(command("pause") & private & user(Var.ADMINS))
+@bot.on_message(command("pause") & private & admin_or_subadmin)
 async def pause_cmd(client, message):
     if not ffpids_cache:
         return await sendMessage(message, "<b>No encoding task is currently running.</b>")
@@ -269,7 +283,7 @@ async def pause_cmd(client, message):
 
 # ─── /resume ──────────────────────────────────────────────────────────────────
 
-@bot.on_message(command("resume") & private & user(Var.ADMINS))
+@bot.on_message(command("resume") & private & admin_or_subadmin)
 async def resume_cmd(client, message):
     if not ffpids_cache:
         return await sendMessage(message, "<b>No encoding task is currently running.</b>")
@@ -288,7 +302,7 @@ async def resume_cmd(client, message):
 
 # ─── /queue ───────────────────────────────────────────────────────────────────
 
-@bot.on_message(command("queue") & private & user(Var.ADMINS))
+@bot.on_message(command("queue") & private & admin_or_subadmin)
 async def queue_cmd(client, message):
     pending = [p for p in ff_queue_order if p in ff_queue_names]
     if not pending:
@@ -307,7 +321,7 @@ async def queue_cmd(client, message):
 
 # ─── Callback: queue priority ─────────────────────────────────────────────────
 
-@bot.on_callback_query(filters.regex(r"^qpriority_(\d+)$") & user(Var.ADMINS))
+@bot.on_callback_query(filters.regex(r"^qpriority_(\d+)$") & admin_or_subadmin)
 async def queue_priority_cb(client, callback_query):
     post_id = int(callback_query.matches[0].group(1))
 
@@ -348,7 +362,7 @@ async def queue_priority_cb(client, callback_query):
 
 # ─── /setffmpeg ───────────────────────────────────────────────────────────────
 
-@bot.on_message(command("setffmpeg") & private & user(Var.ADMINS))
+@bot.on_message(command("setffmpeg") & private & admin_or_subadmin)
 async def setffmpeg_cmd(client, message):
     args = message.text.split(maxsplit=1)
     if len(args) <= 1 or args[1].strip() not in VALID_QUALS:
@@ -377,7 +391,7 @@ async def setffmpeg_cmd(client, message):
 
 # ─── FFmpeg text input handler ────────────────────────────────────────────────
 
-@bot.on_message(filters.text & filters.regex(r'^[^/]') & private & user(Var.ADMINS))
+@bot.on_message(filters.text & filters.regex(r'^[^/]') & private & admin_or_subadmin)
 async def handle_ffmpeg_input(client, message):
     uid = message.from_user.id
     if uid not in pending_ffmpeg:
@@ -406,7 +420,7 @@ async def handle_ffmpeg_input(client, message):
 
 # ─── /listffmpeg ──────────────────────────────────────────────────────────────
 
-@bot.on_message(command("listffmpeg") & private & user(Var.ADMINS))
+@bot.on_message(command("listffmpeg") & private & admin_or_subadmin)
 async def listffmpeg_cmd(client, message):
     configs = await db.getAllFFConfigs()
 
@@ -429,7 +443,7 @@ async def listffmpeg_cmd(client, message):
 
 # ─── /delffmpeg ───────────────────────────────────────────────────────────────
 
-@bot.on_message(command("delffmpeg") & private & user(Var.ADMINS))
+@bot.on_message(command("delffmpeg") & private & admin_or_subadmin)
 async def delffmpeg_cmd(client, message):
     args = message.text.split(maxsplit=1)
     if len(args) <= 1 or args[1].strip() not in VALID_QUALS:
@@ -450,7 +464,7 @@ async def delffmpeg_cmd(client, message):
 
 # ─── /addmagnet ───────────────────────────────────────────────────────────────
 
-@bot.on_message(command("addmagnet") & private & user(Var.ADMINS))
+@bot.on_message(command("addmagnet") & private & admin_or_subadmin)
 async def addmagnet_cmd(client, message):
     args = message.text.split(maxsplit=1)
     if len(args) <= 1:
@@ -468,13 +482,13 @@ async def addmagnet_cmd(client, message):
 
 # ─── /addtorrent ──────────────────────────────────────────────────────────────
 
-@bot.on_message(command("addtorrent") & private & user(Var.ADMINS))
+@bot.on_message(command("addtorrent") & private & admin_or_subadmin)
 async def addtorrent_cmd(client, message):
     pending_torrent[message.from_user.id] = True
     await sendMessage(message, "Send the <b>.torrent</b> file now.")
 
 
-@bot.on_message(filters.document & private & user(Var.ADMINS))
+@bot.on_message(filters.document & private & admin_or_subadmin)
 async def handle_torrent_doc(client, message):
     uid = message.from_user.id
     if uid not in pending_torrent:
@@ -493,7 +507,7 @@ async def handle_torrent_doc(client, message):
 
 # ─── /addpic ──────────────────────────────────────────────────────────────────
 
-@bot.on_message(command("addpic") & private & user(Var.ADMINS))
+@bot.on_message(command("addpic") & private & admin_or_subadmin)
 async def addpic_cmd(client, message):
     args = message.text.split(maxsplit=1)
     if len(args) <= 1:
@@ -534,7 +548,7 @@ async def addpic_cmd(client, message):
 
 # ─── Photo handler for /addpic ────────────────────────────────────────────────
 
-@bot.on_message(filters.photo & private & user(Var.ADMINS))
+@bot.on_message(filters.photo & private & admin_or_subadmin)
 async def handle_pic(client, message):
     uid = message.from_user.id
     if uid not in pending_pic:
@@ -555,7 +569,7 @@ async def handle_pic(client, message):
 
 # ─── /delpic ──────────────────────────────────────────────────────────────────
 
-@bot.on_message(command("delpic") & private & user(Var.ADMINS))
+@bot.on_message(command("delpic") & private & admin_or_subadmin)
 async def delpic_cmd(client, message):
     args = message.text.split(maxsplit=1)
     if len(args) <= 1:
@@ -576,7 +590,7 @@ async def delpic_cmd(client, message):
 
 # ─── /listpics ────────────────────────────────────────────────────────────────
 
-@bot.on_message(command("listpics") & private & user(Var.ADMINS))
+@bot.on_message(command("listpics") & private & admin_or_subadmin)
 async def listpics_cmd(client, message):
     all_pics = await db.getAllAnimePics()
 
@@ -589,7 +603,7 @@ async def listpics_cmd(client, message):
 
 # ─── Callback: listpics pagination ────────────────────────────────────────────
 
-@bot.on_callback_query(filters.regex(r"^listpics_(\d+)$") & user(Var.ADMINS))
+@bot.on_callback_query(filters.regex(r"^listpics_(\d+)$") & admin_or_subadmin)
 async def listpics_page_cb(client, callback_query):
     page     = int(callback_query.matches[0].group(1))
     all_pics = await db.getAllAnimePics()
@@ -616,7 +630,7 @@ async def close_file_cb(client, callback_query):
 
 # ─── /connect ─────────────────────────────────────────────────────────────────
 
-@bot.on_message(command("connect") & private & user(Var.ADMINS))
+@bot.on_message(command("connect") & private & admin_or_subadmin)
 async def connect_cmd(client, message):
     args = message.text.split(maxsplit=1)
     if len(args) <= 1:
@@ -658,7 +672,7 @@ async def connect_cmd(client, message):
 
 # ─── Forward handler for /connect ─────────────────────────────────────────────
 
-@bot.on_message(filters.forwarded & private & user(Var.ADMINS))
+@bot.on_message(filters.forwarded & private & admin_or_subadmin)
 async def handle_forward(client, message):
     uid = message.from_user.id
     if uid not in pending_connect:
@@ -707,7 +721,7 @@ async def handle_forward(client, message):
 
 # ─── /disconnect ──────────────────────────────────────────────────────────────
 
-@bot.on_message(command("disconnect") & private & user(Var.ADMINS))
+@bot.on_message(command("disconnect") & private & admin_or_subadmin)
 async def disconnect_cmd(client, message):
     args = message.text.split(maxsplit=1)
     if len(args) <= 1:
@@ -741,7 +755,7 @@ async def disconnect_cmd(client, message):
 
 # ─── /connections ─────────────────────────────────────────────────────────────
 
-@bot.on_message(command("connections") & private & user(Var.ADMINS))
+@bot.on_message(command("connections") & private & admin_or_subadmin)
 async def connections_cmd(client, message):
     all_conn = await db.getAllConnections()
 
@@ -766,7 +780,7 @@ async def connections_cmd(client, message):
 
 # ─── /delanime ────────────────────────────────────────────────────────────────
 
-@bot.on_message(command("delanime") & private & user(Var.ADMINS))
+@bot.on_message(command("delanime") & private & admin_or_subadmin)
 async def delanime_cmd(client, message):
     args = message.text.split(maxsplit=1)
     if len(args) <= 1:
@@ -786,7 +800,7 @@ async def delanime_cmd(client, message):
 
 # ─── /users ───────────────────────────────────────────────────────────────────
 
-@bot.on_message(command("users") & private & user(Var.ADMINS))
+@bot.on_message(command("users") & private & admin_or_subadmin)
 async def users_cmd(client, message):
     count = await db.getUserCount()
     await sendMessage(message, f"<b>Total Users:</b> <code>{count}</code>")
@@ -794,7 +808,7 @@ async def users_cmd(client, message):
 
 # ─── /addrss ──────────────────────────────────────────────────────────────────
 
-@bot.on_message(command("addrss") & private & user(Var.ADMINS))
+@bot.on_message(command("addrss") & private & admin_or_subadmin)
 async def addrss_cmd(client, message):
     args = message.text.split(maxsplit=1)
     if len(args) <= 1:
@@ -828,7 +842,7 @@ async def addrss_cmd(client, message):
 
 # ─── /delrss ──────────────────────────────────────────────────────────────────
 
-@bot.on_message(command("delrss") & private & user(Var.ADMINS))
+@bot.on_message(command("delrss") & private & admin_or_subadmin)
 async def delrss_cmd(client, message):
     args = message.text.split(maxsplit=1)
     if len(args) <= 1:
@@ -859,7 +873,7 @@ async def delrss_cmd(client, message):
 
 # ─── /listrss ─────────────────────────────────────────────────────────────────
 
-@bot.on_message(command("listrss") & private & user(Var.ADMINS))
+@bot.on_message(command("listrss") & private & admin_or_subadmin)
 async def listrss_cmd(client, message):
     db_rss = await db.getAllRSS()
 
@@ -883,7 +897,7 @@ async def listrss_cmd(client, message):
 
 # ─── /schedule ────────────────────────────────────────────────────────────────
 
-@bot.on_message(command("schedule") & private & user(Var.ADMINS))
+@bot.on_message(command("schedule") & private & admin_or_subadmin)
 async def schedule_cmd(client, message):
     stat = await sendMessage(message, "<i>Fetching today's anime schedule...</i>")
     await send_schedule_post()
