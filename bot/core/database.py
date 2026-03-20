@@ -7,16 +7,17 @@ class MongoDB:
         _token  = os.environ.get("BOT_TOKEN", "")
         _quals  = os.environ.get("QUALS", "360 480 720 1080").split()
 
-        self.__client       = AsyncIOMotorClient(uri)
-        self.__db           = self.__client[database_name]
-        self.__animes       = self.__db.animes[_token.split(':')[0]]
-        self.__connections  = self.__db.channel_connections[_token.split(':')[0]]
-        self.__ffconfigs    = self.__db.ffconfigs[_token.split(':')[0]]
-        self.__rssfeeds     = self.__db.rssfeeds[_token.split(':')[0]]
-        self.__users        = self.__db.users[_token.split(':')[0]]
-        self.__broadcasts   = self.__db.broadcasts[_token.split(':')[0]]
-        self.__fsubchannels = self.__db.fsubchannels[_token.split(':')[0]]
-        self.__quals        = _quals
+        self.__client        = AsyncIOMotorClient(uri)
+        self.__db            = self.__client[database_name]
+        self.__animes        = self.__db.animes[_token.split(':')[0]]
+        self.__connections   = self.__db.channel_connections[_token.split(':')[0]]
+        self.__ffconfigs     = self.__db.ffconfigs[_token.split(':')[0]]
+        self.__rssfeeds      = self.__db.rssfeeds[_token.split(':')[0]]
+        self.__users         = self.__db.users[_token.split(':')[0]]
+        self.__broadcasts    = self.__db.broadcasts[_token.split(':')[0]]
+        self.__fsubchannels  = self.__db.fsubchannels[_token.split(':')[0]]
+        self.__joinrequests  = self.__db.joinrequests[_token.split(':')[0]]
+        self.__quals         = _quals
 
     # ─── Anime Methods ────────────────────────────────────────────────────────
 
@@ -175,16 +176,69 @@ class MongoDB:
         existing = await self.__fsubchannels.find_one({'_id': channel_id})
         if existing:
             return False
-        await self.__fsubchannels.insert_one({'_id': channel_id})
+        await self.__fsubchannels.insert_one({'_id': channel_id, 'request_mode': False})
         return True
 
     async def delFSubChannel(self, channel_id: int) -> bool:
         result = await self.__fsubchannels.delete_one({'_id': channel_id})
-        return result.deleted_count > 0
+        if result.deleted_count > 0:
+            await self.__joinrequests.delete_many({'channel_id': channel_id})
+            return True
+        return False
 
     async def getAllFSubChannels(self) -> list:
         docs = await self.__fsubchannels.find({}).to_list(length=None)
         return [doc['_id'] for doc in docs]
+
+    async def getAllFSubChannelsWithMode(self) -> list:
+        """Returns list of dicts: {id, request_mode}"""
+        docs = await self.__fsubchannels.find({}).to_list(length=None)
+        return [
+            {'id': doc['_id'], 'request_mode': doc.get('request_mode', False)}
+            for doc in docs
+        ]
+
+    async def getFSubChannelMode(self, channel_id: int) -> bool:
+        """Returns True if request mode is ON for this channel, False otherwise."""
+        doc = await self.__fsubchannels.find_one({'_id': channel_id}, {'request_mode': 1})
+        return doc.get('request_mode', False) if doc else False
+
+    async def setFSubChannelMode(self, channel_id: int, request_mode: bool) -> None:
+        """Set request_mode ON (True) or OFF (False) for a channel."""
+        await self.__fsubchannels.update_one(
+            {'_id': channel_id},
+            {'$set': {'request_mode': request_mode}},
+            upsert=True
+        )
+
+    # ─── Join Request Methods ─────────────────────────────────────────────────
+
+    async def saveJoinRequest(self, channel_id: int, user_id: int) -> None:
+        """Record that a user has sent a join request to a channel."""
+        doc_id = f"{channel_id}:{user_id}"
+        await self.__joinrequests.update_one(
+            {'_id': doc_id},
+            {'$set': {'channel_id': channel_id, 'user_id': user_id}},
+            upsert=True
+        )
+
+    async def hasJoinRequest(self, channel_id: int, user_id: int) -> bool:
+        """Check if a user has a pending join request for a channel."""
+        doc_id = f"{channel_id}:{user_id}"
+        return bool(await self.__joinrequests.find_one({'_id': doc_id}))
+
+    async def delJoinRequest(self, channel_id: int, user_id: int) -> None:
+        """Remove a join request record (e.g. after user actually joins)."""
+        doc_id = f"{channel_id}:{user_id}"
+        await self.__joinrequests.delete_one({'_id': doc_id})
+
+    async def getJoinRequestCount(self, channel_id: int) -> int:
+        """Total number of pending join requests tracked for a channel."""
+        return await self.__joinrequests.count_documents({'channel_id': channel_id})
+
+    async def getTotalJoinRequests(self) -> int:
+        """Total join requests across all channels."""
+        return await self.__joinrequests.count_documents({})
 
 
 _mongo_uri = os.environ.get("MONGO_URI", "")
