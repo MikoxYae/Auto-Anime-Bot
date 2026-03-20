@@ -173,14 +173,18 @@ async def help_cmd(client, message):
         "<b>RSS Feeds:</b>\n"
         "/addrss <code>&lt;url&gt;</code> - Add a custom RSS feed URL\n"
         "/delrss <code>&lt;url&gt;</code> - Remove a saved RSS feed URL\n"
-        "/listrss - List all saved RSS feeds (shows .env default if none saved)\n\n"
+        "/listrss - List all saved RSS feeds\n\n"
+        "<b>Force Sub:</b>\n"
+        "/addchnl <code>&lt;id&gt;</code> - Add a force-sub channel\n"
+        "/delchnl <code>&lt;id&gt;</code> - Remove a force-sub channel\n"
+        "/listchnl - List all force-sub channels\n\n"
         "<b>Broadcast:</b>\n"
         "/broadcast - Reply to a message to send it to all users\n"
         "/fbroadcast - Reply to a message to forward it to all users\n"
         "/pbroadcast - Reply to a message to send and pin it in all users DMs\n"
         "/dbroadcast <code>&lt;id&gt;</code> - Delete a broadcast from all users"
     )
-
+    
 
 # ─── /status ──────────────────────────────────────────────────────────────────
 
