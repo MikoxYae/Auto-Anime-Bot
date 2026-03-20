@@ -35,6 +35,39 @@ async def fetch_animes():
                     bot_loop.create_task(get_animes(info.title, info.link))
 
 
+async def _find_connection(ani_id, name: str, pdata: dict) -> dict | None:
+    if ani_id:
+        conn = await db.getChannelConnection(ani_id)
+        if conn:
+            return conn
+
+    name_lower   = name.lower()
+    parsed_title = (pdata.get('anime_title') or '').lower()
+
+    all_conns = await db.getAllConnections()
+    for c in all_conns:
+        stored     = (c.get('ani_name') or '').lower().strip()
+        stored_alt = (c.get('ani_name_alt') or '').lower().strip()
+
+        if stored and stored in name_lower:
+            LOGS.info(f"Connection matched by English name: {stored}")
+            return c
+
+        if stored_alt and stored_alt in name_lower:
+            LOGS.info(f"Connection matched by Romaji name: {stored_alt}")
+            return c
+
+        if stored and parsed_title and stored in parsed_title:
+            LOGS.info(f"Connection matched by parsed title (English): {stored}")
+            return c
+
+        if stored_alt and parsed_title and stored_alt in parsed_title:
+            LOGS.info(f"Connection matched by parsed title (Romaji): {stored_alt}")
+            return c
+
+    return None
+
+
 async def get_animes(name, torrent, force=False):
     try:
         aniInfo = TextEditor(name)
@@ -43,13 +76,14 @@ async def get_animes(name, torrent, force=False):
         ani_id = aniInfo.adata.get('id')
         ep_no  = aniInfo.pdata.get("episode_number")
 
-        if ani_id not in ani_cache['ongoing']:
-            ani_cache['ongoing'].add(ani_id)
-        elif not force:
-            return
+        if ani_id is not None:
+            if ani_id not in ani_cache['ongoing']:
+                ani_cache['ongoing'].add(ani_id)
+            elif not force:
+                return
 
-        if not force and ani_id in ani_cache['completed']:
-            return
+            if not force and ani_id in ani_cache['completed']:
+                return
 
         if force or (
             not (ani_data := await db.getAnime(ani_id))
@@ -60,17 +94,7 @@ async def get_animes(name, torrent, force=False):
                 await rep.report(f"Torrent Skipped!\n\n{name}", "warning")
                 return
 
-            # ── Check for connected channel ───────────────────────────────
-            conn = await db.getChannelConnection(ani_id) if ani_id else None
-
-            if not conn:
-                all_conns = await db.getAllConnections()
-                for c in all_conns:
-                    stored = c.get('ani_name', '').lower()
-                    if stored and stored in name.lower():
-                        conn = c
-                        LOGS.info(f"Matched connection by name: {stored}")
-                        break
+            conn = await _find_connection(ani_id, name, aniInfo.pdata)
 
             if conn:
                 upload_channel = int(conn['channel_id'])
@@ -82,18 +106,15 @@ async def get_animes(name, torrent, force=False):
 
             await rep.report(f"New Anime Torrent Found!\n\n{name}", "info")
 
-            # ── Custom pic check ──────────────────────────────────────────
             custom_pic = await db.getAnimePic(ani_id) if ani_id else None
             poster     = custom_pic or await aniInfo.get_poster()
 
-            # ── Post to upload channel (poster + caption) ─────────────────
             post_msg = await bot.send_photo(
                 upload_channel,
                 photo=poster,
                 caption=await aniInfo.get_caption()
             )
 
-            # ── If connected channel: post join button in main channel ─────
             if conn and invite_link:
                 await bot.send_photo(
                     Var.MAIN_CHANNEL,
@@ -111,14 +132,12 @@ async def get_animes(name, torrent, force=False):
                 f"‣ <b>Anime Name :</b> <b><i>{name}</i></b>\n\n<i>Downloading...</i>"
             )
 
-            # ── Download ──────────────────────────────────────────────────
             dl = await TorDownloader("./downloads").download(torrent, name)
             if not dl or not ospath.exists(dl):
                 await rep.report("File Download Incomplete, Try Again", "error")
                 await stat_msg.delete()
                 return
 
-            # ── Encode queue ──────────────────────────────────────────────
             post_id  = post_msg.id
             ffEvent  = Event()
             ff_queued[post_id] = ffEvent
@@ -140,7 +159,6 @@ async def get_animes(name, torrent, force=False):
             btns         = []
             upload_queue = AsyncQueue()
 
-            # ── Semaphore: max 2 encodes at a time ────────────────────────
             encode_sem = Semaphore(2)
 
             async def encode_and_queue(qual, turn_index):
@@ -163,8 +181,8 @@ async def get_animes(name, torrent, force=False):
                         await rep.report(f"Encode Error [{qual}p]: {e}", "error")
                         out_path = None
 
-                    time_taken = convertTime(time() - encode_start)
-                    anime_title = (aniInfo.adata.get('title') or {})
+                    time_taken   = convertTime(time() - encode_start)
+                    anime_title  = (aniInfo.adata.get('title') or {})
                     display_name = anime_title.get('english') or anime_title.get('romaji') or name
 
                     if out_path:
@@ -186,8 +204,9 @@ async def get_animes(name, torrent, force=False):
 
                 await upload_queue.put((qual, filename, out_path))
 
-            # ── Upload worker ─────────────────────────────────────────────
             async def upload_worker():
+                bot_username = (await bot.get_me()).username
+
                 for _ in range(total_quals):
                     qual, filename, out_path = await upload_queue.get()
 
@@ -213,7 +232,7 @@ async def get_animes(name, torrent, force=False):
                     store_msg_id = msg.id
 
                     link = (
-                        f"https://telegram.me/{(await bot.get_me()).username}"
+                        f"https://telegram.me/{bot_username}"
                         f"?start=get-{await encode(str(store_msg_id * abs(Var.FILE_STORE)))}"
                     )
 
@@ -251,7 +270,6 @@ async def get_animes(name, torrent, force=False):
             ffLock.release()
             await stat_msg.delete()
 
-            # ── Send completion sticker ───────────────────────────────────
             _sticker_type    = 'connected' if conn else 'main'
             _default_sticker = (
                 'CAACAgUAAxkBAAEQyYRpvRP_pjHK_GP8eE4VjFPWw9wr7AADFQAClP0pVztrIQO4kT1IOgQ'
@@ -267,7 +285,8 @@ async def get_animes(name, torrent, force=False):
             if ospath.exists(dl):
                 await aioremove(dl)
 
-        ani_cache['completed'].add(ani_id)
+        if ani_id is not None:
+            ani_cache['completed'].add(ani_id)
 
     except Exception:
         await rep.report(format_exc(), "error")
@@ -280,6 +299,9 @@ async def get_animes(name, torrent, force=False):
 async def extra_utils(msg_id, chat_id=None):
     target_chat = chat_id or Var.FILE_STORE
     msg = await bot.get_messages(target_chat, message_ids=msg_id)
-    if Var.BACKUP_CHANNEL != 0:
+    if Var.BACKUP_CHANNEL and str(Var.BACKUP_CHANNEL).strip():
         for cid in str(Var.BACKUP_CHANNEL).split():
-            await msg.copy(int(cid))
+            try:
+                await msg.copy(int(cid))
+            except Exception as e:
+                LOGS.error(f"Backup copy failed for {cid}: {e}")
