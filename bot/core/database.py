@@ -168,6 +168,20 @@ class MongoDB:
     async def delBroadcast(self, broadcast_id: int) -> None:
         await self.__broadcasts.delete_one({'_id': broadcast_id})
 
+# ─── Force Sub Channel Methods ────────────────────────────────────────────
+    async def addFSubChannel(self, channel_id: int) -> bool:
+        existing = await self.__fsubchannels.find_one({'_id': channel_id})
+        if existing:
+            return False
+        await self.__fsubchannels.insert_one({'_id': channel_id})
+        return True
+    async def delFSubChannel(self, channel_id: int) -> bool:
+        result = await self.__fsubchannels.delete_one({'_id': channel_id})
+        return result.deleted_count > 0
+    async def getAllFSubChannels(self) -> list:
+        docs = await self.__fsubchannels.find({}).to_list(length=None)
+        return [doc['_id'] for doc in docs]
+        
 
 _mongo_uri = os.environ.get("MONGO_URI", "")
 db = MongoDB(_mongo_uri, "FZAutoAnimes")
