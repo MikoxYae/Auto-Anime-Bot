@@ -2,13 +2,14 @@ from asyncio import gather, sleep as asleep, Event, Queue as AsyncQueue, Semapho
 from os import path as ospath
 from aiofiles.os import remove as aioremove
 from traceback import format_exc
+from time import time
 
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot import bot, bot_loop, Var, ani_cache, ffQueue, ffLock, ff_queued, ff_queue_names, ff_queue_order, LOGS
 from .tordownload import TorDownloader
 from .database import db
-from .func_utils import getfeed, encode, editMessage, sendMessage, convertBytes
+from .func_utils import getfeed, encode, editMessage, sendMessage, convertBytes, convertTime
 from .text_utils import TextEditor
 from .ffencoder import FFEncoder
 from .tguploader import TgUploader
@@ -151,6 +152,7 @@ async def get_animes(name, torrent, force=False):
 
                 async with encode_sem:
                     await rep.report(f"Starting Encode [{qual}p]...", "info")
+                    encode_start = time()
                     try:
                         out_path = await FFEncoder(
                             stat_msg, dl, filename, qual,
@@ -160,6 +162,27 @@ async def get_animes(name, torrent, force=False):
                     except Exception as e:
                         await rep.report(f"Encode Error [{qual}p]: {e}", "error")
                         out_path = None
+
+                    time_taken = convertTime(time() - encode_start)
+                    anime_title = (aniInfo.adata.get('title') or {})
+                    display_name = anime_title.get('english') or anime_title.get('romaji') or name
+
+                    if out_path:
+                        await rep.report(
+                            f"✅ Encode Complete!\n\n"
+                            f"‣ Anime: {display_name}\n"
+                            f"‣ Quality: {qual}p\n"
+                            f"‣ Time Taken: {time_taken}",
+                            "info"
+                        )
+                    else:
+                        await rep.report(
+                            f"❌ Encode Failed!\n\n"
+                            f"‣ Anime: {display_name}\n"
+                            f"‣ Quality: {qual}p\n"
+                            f"‣ Time Taken: {time_taken}",
+                            "error"
+                        )
 
                 await upload_queue.put((qual, filename, out_path))
 
