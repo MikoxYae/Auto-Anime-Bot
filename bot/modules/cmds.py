@@ -676,7 +676,19 @@ async def connect_cmd(client, message):
 
 # ─── Forward handler for /connect ─────────────────────────────────────────────
 
-@bot.on_message(filters.forwarded & filters.private & admin_or_subadmin)
+def _is_forwarded(_, __, message):
+    return bool(
+        getattr(message, 'forward_from_chat', None)
+        or getattr(message, 'forward_from', None)
+        or getattr(message, 'forward_date', None)
+        or getattr(message, 'forward_sender_name', None)
+        or getattr(getattr(message, 'forward_origin', None), 'chat', None)
+        or getattr(message, 'forward_origin', None) is not None
+    )
+
+is_forwarded = filters.create(_is_forwarded)
+
+@bot.on_message(is_forwarded & filters.private & admin_or_subadmin)
 async def handle_forward(client, message):
     uid = message.from_user.id
 
