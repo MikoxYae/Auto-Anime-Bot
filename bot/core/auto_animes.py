@@ -250,6 +250,20 @@ async def get_animes(name, torrent, force=False):
 
             ffLock.release()
             await stat_msg.delete()
+
+            # ── Send completion sticker ───────────────────────────────────
+            _sticker_type    = 'connected' if conn else 'main'
+            _default_sticker = (
+                'CAACAgUAAxkBAAEQyYRpvRP_pjHK_GP8eE4VjFPWw9wr7AADFQAClP0pVztrIQO4kT1IOgQ'
+                if conn else
+                'CAACAgUAAxkBAAEQyYJpvRP7-N28QbduJUo9erWgDXv2pwACiBAAAuWgKFeB8NkyyNkOAAE6BA'
+            )
+            _sticker_id = (await db.getSticker(_sticker_type)) or _default_sticker
+            try:
+                await bot.send_sticker(upload_channel, _sticker_id)
+            except Exception:
+                pass
+
             if ospath.exists(dl):
                 await aioremove(dl)
 
