@@ -655,10 +655,12 @@ async def connect_cmd(client, message):
 
     titles       = aniInfo.adata.get('title', {})
     display_name = titles.get('english') or titles.get('romaji') or anime_name
+    romaji_name  = titles.get('romaji') or ''
 
     pending_connect[message.from_user.id] = {
-        'ani_id':   ani_id,
-        'ani_name': display_name
+        'ani_id':        ani_id,
+        'ani_name':      display_name,
+        'ani_name_alt':  romaji_name
     }
 
     await editMessage(
@@ -666,66 +668,70 @@ async def connect_cmd(client, message):
         f"<b>Anime Found:</b> <i>{display_name}</i>\n"
         f"<b>AniList ID:</b> <code>{ani_id}</code>\n\n"
         f"Now <b>forward any message</b> from the channel you want to connect.\n"
-        f"<i>(Bot must be admin in that channel)</i>"
+        f"<i>(Bot must be admin in that channel)</i>\n\n"
+        f"⚠️ <b>Note:</b> If the channel has <b>Restrict Saving Content</b> enabled,\n"
+        f"forwarding will fail. Disable it temporarily, forward a message, then re-enable."
     )
 
 
 # ─── Forward handler for /connect ─────────────────────────────────────────────
 
-@bot.on_message(filters.private & admin_or_subadmin)
+@bot.on_message(filters.forwarded & filters.private & admin_or_subadmin)
 async def handle_forward(client, message):
     uid = message.from_user.id
+
     if uid not in pending_connect:
         return
 
-    # Support both old API (forward_from_chat) and new API (forward_origin)
     channel = message.forward_from_chat
+
     if not channel:
         origin = getattr(message, 'forward_origin', None)
         if origin:
             channel = getattr(origin, 'chat', None)
 
     if not channel:
-        # Not a forwarded message at all — ignore silently so other handlers work
-        if not (message.forward_date or getattr(message, 'forward_origin', None)):
-            return
-        # It IS a forward but we couldn't get the channel
+        pending_connect.pop(uid, None)
         return await sendMessage(
             message,
-            "Could not get channel info.\n\n"
-            "Make sure:\n"
-            "• You forwarded from a <b>channel</b> (not a group)\n"
-            "• The channel's forward privacy is not restricted\n\n"
-            "<i>Try again — send /connect to restart.</i>"
+            "<b>❌ Could not get channel info from this forward.</b>\n\n"
+            "<b>Possible reasons:</b>\n"
+            "• The channel has <b>Restrict Saving Content</b> enabled\n"
+            "• You forwarded from a group or user, not a channel\n\n"
+            "<b>How to fix:</b>\n"
+            "1. Go to the channel → Edit → <b>turn off Restrict Saving Content</b>\n"
+            "2. Forward any message from that channel here\n"
+            "3. You can re-enable the restriction afterwards\n\n"
+            "<i>Run /connect again to retry.</i>"
         )
 
-    # Only pop pending state once we have valid channel info
     ani_info     = pending_connect.pop(uid)
     channel_id   = channel.id
-    channel_name = channel.title or "Unknown"
+    channel_name = channel.title or str(channel_id)
 
     try:
         invite      = await client.create_chat_invite_link(channel_id)
         invite_link = invite.invite_link
     except Exception:
-        invite_link = f"https://t.me/{channel.username}" if channel.username else ""
+        invite_link = f"https://t.me/{channel.username}" if getattr(channel, 'username', None) else ""
 
     await db.connectChannel(
         ani_info['ani_id'],
         ani_info['ani_name'],
         channel_id,
         channel_name,
-        invite_link
+        invite_link,
+        ani_name_alt=ani_info.get('ani_name_alt', '')
     )
 
     await sendMessage(
         message,
-        f"<b>Channel Connected Successfully!</b>\n\n"
+        f"<b>✅ Channel Connected Successfully!</b>\n\n"
         f"• <b>Anime:</b> {ani_info['ani_name']}\n"
         f"• <b>AniList ID:</b> <code>{ani_info['ani_id']}</code>\n"
         f"• <b>Channel:</b> {channel_name}\n"
         f"• <b>Channel ID:</b> <code>{channel_id}</code>\n"
-        f"• <b>Invite Link:</b> {invite_link}\n\n"
+        f"• <b>Invite Link:</b> {invite_link or 'N/A'}\n\n"
         f"<i>From now, this anime will be uploaded to the connected channel.</i>"
     )
 
@@ -757,7 +763,7 @@ async def disconnect_cmd(client, message):
     await db.disconnectChannel(ani_id)
     await sendMessage(
         message,
-        f"<b>Disconnected!</b>\n\n"
+        f"<b>✅ Disconnected!</b>\n\n"
         f"• <b>Anime:</b> {conn.get('ani_name', 'Unknown')}\n"
         f"• <b>Channel:</b> {conn.get('channel_name', 'Unknown')}\n\n"
         f"<i>This anime will now upload to main channel.</i>"
