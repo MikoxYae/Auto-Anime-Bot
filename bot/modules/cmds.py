@@ -16,6 +16,7 @@ from bot.core.tordownload import TorDownloader
 from bot.core.auto_animes import get_animes
 from bot.core.reporter import rep
 from bot.modules.up_posts import send_schedule_post
+from bot.modules.fsub import check_fsub
 
 
 # ─── Filter Helpers ───────────────────────────────────────────────────────────
@@ -106,6 +107,8 @@ async def start_cmd(client, message):
     await db.addUser(message.from_user.id)
     args = message.text.split()
     if len(args) > 1 and args[1].startswith("get-"):
+        if not await check_fsub(client, message):
+            return
         try:
             data   = await decode(args[1][4:])
             msg_id = int(data) // abs(Var.FILE_STORE)
@@ -184,7 +187,7 @@ async def help_cmd(client, message):
         "/pbroadcast - Reply to a message to send and pin it in all users DMs\n"
         "/dbroadcast <code>&lt;id&gt;</code> - Delete a broadcast from all users"
     )
-    
+
 
 # ─── /status ──────────────────────────────────────────────────────────────────
 
@@ -364,8 +367,6 @@ async def setffmpeg_cmd(client, message):
 
 
 # ─── FFmpeg text input handler ────────────────────────────────────────────────
-# NOTE: filters.regex(r'^[^/]') ensures command messages (starting with /)
-#       never trigger this handler — fixes all-commands-broken bug.
 
 @bot.on_message(filters.text & filters.regex(r'^[^/]') & private & user(Var.ADMINS))
 async def handle_ffmpeg_input(client, message):
@@ -812,7 +813,7 @@ async def addrss_cmd(client, message):
         message,
         f"<b>RSS Feed Added!</b>\n\n"
         f"<code>{url}</code>\n\n"
-        f"<i>This feed will be used instead of .env default (if any feeds are saved).</i>"
+        f"<i>This feed will be used instead of .env default.</i>"
     )
 
 
@@ -836,7 +837,7 @@ async def delrss_cmd(client, message):
             message,
             f"<b>Not found!</b>\n\n"
             f"<code>{url}</code>\n\n"
-            f"<i>No saved RSS feed with that URL. Use /listrss to check.</i>"
+            f"<i>Use /listrss to check saved feeds.</i>"
         )
 
     await sendMessage(
