@@ -184,7 +184,7 @@ async def help_cmd(client, message):
         "/listffmpeg - List all saved FFmpeg configs\n"
         "/delffmpeg <code>&lt;quality&gt;</code> - Delete a FFmpeg config\n\n"
         "<b>Channel Connections:</b>\n"
-        "/connect <code>&lt;anime name&gt;</code> - Connect anime to a channel\n"
+        "/connect <code>&lt;anime name&gt; | &lt;channel_id&gt;</code> - Connect anime to a channel\n"
         "/disconnect <code>&lt;anilist id&gt;</code> - Remove a connection\n"
         "/connections - List all connections\n\n"
         "<b>Custom Picture:</b>\n"
@@ -629,19 +629,37 @@ async def close_file_cb(client, callback_query):
 
 
 # ─── /connect ─────────────────────────────────────────────────────────────────
+# Usage: /connect <anime name> | <channel_id>
+# Example: /connect Chained Soldier | -1001234567890
 
 @bot.on_message(command("connect") & private & admin_or_subadmin)
 async def connect_cmd(client, message):
     args = message.text.split(maxsplit=1)
-    if len(args) <= 1:
+    if len(args) <= 1 or '|' not in args[1]:
         return await sendMessage(
             message,
-            "Usage: /connect <code>&lt;anime name&gt;</code>\n\n"
-            "Example: /connect <code>Hell's Paradise</code>"
+            "<b>Usage:</b> /connect <code>&lt;anime name&gt; | &lt;channel_id&gt;</code>\n\n"
+            "<b>Example:</b>\n"
+            "<code>/connect Chained Soldier | -1001234567890</code>\n\n"
+            "<b>How to get channel ID:</b>\n"
+            "Forward any message from your channel to @userinfobot\n"
+            "or use @username_to_id_bot to find the numeric ID."
         )
 
-    anime_name = args[1].strip()
-    stat       = await sendMessage(message, f"<i>Searching AniList for:</i> <b>{anime_name}</b>...")
+    parts      = args[1].split('|', 1)
+    anime_name = parts[0].strip()
+    cid_str    = parts[1].strip()
+
+    try:
+        channel_id = int(cid_str)
+    except ValueError:
+        return await sendMessage(
+            message,
+            f"<b>Invalid channel ID:</b> <code>{cid_str}</code>\n\n"
+            "Channel ID must be a number like <code>-1001234567890</code>"
+        )
+
+    stat = await sendMessage(message, f"<i>Searching AniList for:</i> <b>{anime_name}</b>...")
 
     aniInfo = TextEditor(anime_name)
     await aniInfo.load_anilist()
@@ -650,97 +668,48 @@ async def connect_cmd(client, message):
     if not ani_id:
         return await editMessage(
             stat,
-            f"Anime not found on AniList: <b>{anime_name}</b>\nTry a different name."
+            f"❌ Anime not found on AniList: <b>{anime_name}</b>\n\nTry a different name."
         )
 
     titles       = aniInfo.adata.get('title', {})
     display_name = titles.get('english') or titles.get('romaji') or anime_name
     romaji_name  = titles.get('romaji') or ''
 
-    pending_connect[message.from_user.id] = {
-        'ani_id':        ani_id,
-        'ani_name':      display_name,
-        'ani_name_alt':  romaji_name
-    }
+    await editMessage(stat, "<i>Anime found. Fetching channel info...</i>")
 
-    await editMessage(
-        stat,
-        f"<b>Anime Found:</b> <i>{display_name}</i>\n"
-        f"<b>AniList ID:</b> <code>{ani_id}</code>\n\n"
-        f"Now <b>forward any message</b> from the channel you want to connect.\n"
-        f"<i>(Bot must be admin in that channel)</i>\n\n"
-        f"⚠️ <b>Note:</b> If the channel has <b>Restrict Saving Content</b> enabled,\n"
-        f"forwarding will fail. Disable it temporarily, forward a message, then re-enable."
-    )
-
-
-# ─── Forward handler for /connect ─────────────────────────────────────────────
-
-def _is_forwarded(_, __, message):
-    return bool(
-        getattr(message, 'forward_from_chat', None)
-        or getattr(message, 'forward_from', None)
-        or getattr(message, 'forward_date', None)
-        or getattr(message, 'forward_sender_name', None)
-        or getattr(getattr(message, 'forward_origin', None), 'chat', None)
-        or getattr(message, 'forward_origin', None) is not None
-    )
-
-is_forwarded = filters.create(_is_forwarded)
-
-@bot.on_message(is_forwarded & filters.private & admin_or_subadmin)
-async def handle_forward(client, message):
-    uid = message.from_user.id
-
-    if uid not in pending_connect:
-        return
-
-    channel = message.forward_from_chat
-
-    if not channel:
-        origin = getattr(message, 'forward_origin', None)
-        if origin:
-            channel = getattr(origin, 'chat', None)
-
-    if not channel:
-        pending_connect.pop(uid, None)
-        return await sendMessage(
-            message,
-            "<b>❌ Could not get channel info from this forward.</b>\n\n"
-            "<b>Possible reasons:</b>\n"
-            "• The channel has <b>Restrict Saving Content</b> enabled\n"
-            "• You forwarded from a group or user, not a channel\n\n"
-            "<b>How to fix:</b>\n"
-            "1. Go to the channel → Edit → <b>turn off Restrict Saving Content</b>\n"
-            "2. Forward any message from that channel here\n"
-            "3. You can re-enable the restriction afterwards\n\n"
-            "<i>Run /connect again to retry.</i>"
+    try:
+        chat         = await client.get_chat(channel_id)
+        channel_name = chat.title or str(channel_id)
+    except Exception as e:
+        return await editMessage(
+            stat,
+            f"❌ <b>Could not fetch channel info.</b>\n\n"
+            f"<b>Error:</b> <code>{e}</code>\n\n"
+            f"Make sure:\n"
+            f"• The channel ID is correct\n"
+            f"• The bot is an <b>admin</b> in that channel"
         )
-
-    ani_info     = pending_connect.pop(uid)
-    channel_id   = channel.id
-    channel_name = channel.title or str(channel_id)
 
     try:
         invite      = await client.create_chat_invite_link(channel_id)
         invite_link = invite.invite_link
     except Exception:
-        invite_link = f"https://t.me/{channel.username}" if getattr(channel, 'username', None) else ""
+        invite_link = f"https://t.me/{chat.username}" if getattr(chat, 'username', None) else ""
 
     await db.connectChannel(
-        ani_info['ani_id'],
-        ani_info['ani_name'],
+        ani_id,
+        display_name,
         channel_id,
         channel_name,
         invite_link,
-        ani_name_alt=ani_info.get('ani_name_alt', '')
+        ani_name_alt=romaji_name
     )
 
-    await sendMessage(
-        message,
+    await editMessage(
+        stat,
         f"<b>✅ Channel Connected Successfully!</b>\n\n"
-        f"• <b>Anime:</b> {ani_info['ani_name']}\n"
-        f"• <b>AniList ID:</b> <code>{ani_info['ani_id']}</code>\n"
+        f"• <b>Anime:</b> {display_name}\n"
+        f"• <b>AniList ID:</b> <code>{ani_id}</code>\n"
         f"• <b>Channel:</b> {channel_name}\n"
         f"• <b>Channel ID:</b> <code>{channel_id}</code>\n"
         f"• <b>Invite Link:</b> {invite_link or 'N/A'}\n\n"
