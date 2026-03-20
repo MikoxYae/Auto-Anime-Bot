@@ -17,6 +17,8 @@ class MongoDB:
         self.__broadcasts    = self.__db.broadcasts[_token.split(':')[0]]
         self.__fsubchannels  = self.__db.fsubchannels[_token.split(':')[0]]
         self.__joinrequests  = self.__db.joinrequests[_token.split(':')[0]]
+        self.__subadmins     = self.__db.subadmins[_token.split(':')[0]]
+        self.__botsettings   = self.__db.botsettings[_token.split(':')[0]]
         self.__quals         = _quals
 
     # ─── Anime Methods ────────────────────────────────────────────────────────
@@ -239,6 +241,45 @@ class MongoDB:
     async def getTotalJoinRequests(self) -> int:
         """Total join requests across all channels."""
         return await self.__joinrequests.count_documents({})
+
+    # ─── Sub Admin Methods ────────────────────────────────────────────────────
+
+    async def addSubAdmin(self, user_id: int) -> bool:
+        """Add a sub admin. Returns False if already exists."""
+        existing = await self.__subadmins.find_one({'_id': user_id})
+        if existing:
+            return False
+        await self.__subadmins.insert_one({'_id': user_id})
+        return True
+
+    async def delSubAdmin(self, user_id: int) -> bool:
+        """Remove a sub admin. Returns False if not found."""
+        result = await self.__subadmins.delete_one({'_id': user_id})
+        return result.deleted_count > 0
+
+    async def getAllSubAdmins(self) -> list:
+        """Returns list of sub admin user IDs."""
+        docs = await self.__subadmins.find({}, {'_id': 1}).to_list(length=None)
+        return [doc['_id'] for doc in docs]
+
+    async def isSubAdmin(self, user_id: int) -> bool:
+        """Check if a user is a sub admin."""
+        return bool(await self.__subadmins.find_one({'_id': user_id}))
+
+    # ─── Bot Settings Methods ─────────────────────────────────────────────────
+
+    async def setDelTimer(self, seconds: int) -> None:
+        """Save a custom delete timer (in seconds) to the database."""
+        await self.__botsettings.update_one(
+            {'_id': 'del_timer'},
+            {'$set': {'value': seconds}},
+            upsert=True
+        )
+
+    async def getDelTimer(self) -> int | None:
+        """Get saved delete timer. Returns None if not set in DB (use Var.DEL_TIMER fallback)."""
+        doc = await self.__botsettings.find_one({'_id': 'del_timer'})
+        return doc['value'] if doc else None
 
 
 _mongo_uri = os.environ.get("MONGO_URI", "")
