@@ -278,6 +278,17 @@ class MongoDB:
         doc = await self.__botsettings.find_one({'_id': 'auto_delete'})
         return doc['value'] if doc else None
 
+    async def setBatchMode(self, enabled: bool) -> None:
+        await self.__botsettings.update_one(
+            {'_id': 'batch_mode'},
+            {'$set': {'value': enabled}},
+            upsert=True
+        )
+
+    async def getBatchMode(self) -> bool | None:
+        doc = await self.__botsettings.find_one({'_id': 'batch_mode'})
+        return doc['value'] if doc else None
+
 
 _mongo_uri = os.environ.get("MONGO_URI", "")
 db = MongoDB(_mongo_uri, "FZAutoAnimes")
