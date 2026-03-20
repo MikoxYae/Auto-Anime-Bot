@@ -103,6 +103,7 @@ def _build_pics_page(all_pics, page):
 
 @bot.on_message(command("start") & private)
 async def start_cmd(client, message):
+    await db.addUser(message.from_user.id)
     args = message.text.split()
     if len(args) > 1 and args[1].startswith("get-"):
         try:
@@ -172,7 +173,12 @@ async def help_cmd(client, message):
         "<b>RSS Feeds:</b>\n"
         "/addrss <code>&lt;url&gt;</code> - Add a custom RSS feed URL\n"
         "/delrss <code>&lt;url&gt;</code> - Remove a saved RSS feed URL\n"
-        "/listrss - List all saved RSS feeds (shows .env default if none saved)"
+        "/listrss - List all saved RSS feeds (shows .env default if none saved)\n\n"
+        "<b>Broadcast:</b>\n"
+        "/broadcast - Reply to a message to send it to all users\n"
+        "/fbroadcast - Reply to a message to forward it to all users\n"
+        "/pbroadcast - Reply to a message to send and pin it in all users DMs\n"
+        "/dbroadcast <code>&lt;id&gt;</code> - Delete a broadcast from all users"
     )
 
 
@@ -184,6 +190,7 @@ async def status_cmd(client, message):
     ongoing      = len(ani_cache['ongoing'])
     completed    = len(ani_cache['completed'])
     connections  = await db.getAllConnections()
+    user_count   = await db.getUserCount()
 
     await sendMessage(
         message,
@@ -191,7 +198,8 @@ async def status_cmd(client, message):
         f"• <b>Auto Fetch:</b> {fetch_status}\n"
         f"• <b>Ongoing Animes:</b> {ongoing}\n"
         f"• <b>Completed Animes:</b> {completed}\n"
-        f"• <b>Channel Connections:</b> {len(connections)}"
+        f"• <b>Channel Connections:</b> {len(connections)}\n"
+        f"• <b>Total Users:</b> {user_count}"
     )
 
 
@@ -766,7 +774,8 @@ async def delanime_cmd(client, message):
 
 @bot.on_message(command("users") & private & user(Var.ADMINS))
 async def users_cmd(client, message):
-    await sendMessage(message, "This feature requires user tracking setup.")
+    count = await db.getUserCount()
+    await sendMessage(message, f"<b>Total Users:</b> <code>{count}</code>")
 
 
 # ─── /addrss ──────────────────────────────────────────────────────────────────
