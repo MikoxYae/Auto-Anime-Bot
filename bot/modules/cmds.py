@@ -114,10 +114,16 @@ async def start_cmd(client, message):
             msg_id = int(data) // abs(Var.FILE_STORE)
             msg    = await client.get_messages(Var.FILE_STORE, message_ids=msg_id)
             sent   = await msg.copy(message.chat.id)
-            if Var.AUTO_DEL:
+
+            db_autodel = await db.getAutoDelete()
+            db_timer   = await db.getDelTimer()
+            auto_del   = db_autodel if db_autodel is not None else Var.AUTO_DEL
+            del_timer  = db_timer   if db_timer   is not None else Var.DEL_TIMER
+
+            if auto_del:
                 warn_msg = await sendMessage(
                     message.chat.id,
-                    f"⚠️ <i>This file will be automatically deleted in <b>{Var.DEL_TIMER} seconds</b>.</i>"
+                    f"⚠️ <i>This file will be automatically deleted in <b>{del_timer} seconds</b>.</i>"
                 )
                 file_name = (
                     getattr(sent.document, 'file_name', None)
@@ -125,7 +131,7 @@ async def start_cmd(client, message):
                     or "File"
                 )
                 bot.loop.create_task(
-                    _replace_after_delete(sent, warn_msg, Var.DEL_TIMER, file_name, args[1])
+                    _replace_after_delete(sent, warn_msg, del_timer, file_name, args[1])
                 )
         except Exception:
             await sendMessage(message, "File not found or expired.")
