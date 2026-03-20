@@ -35,15 +35,18 @@ async def _is_authorized(user_id: int) -> bool:
 # ─── Panel Builders ───────────────────────────────────────────────────────────
 
 async def _settings_text() -> str:
-    sub_admins = await db.getAllSubAdmins()
-    db_timer   = await db.getDelTimer()
-    db_autodel = await db.getAutoDelete()
+    sub_admins  = await db.getAllSubAdmins()
+    db_timer    = await db.getDelTimer()
+    db_autodel  = await db.getAutoDelete()
+    db_batch    = await db.getBatchMode()
 
-    timer_val  = db_timer if db_timer is not None else Var.DEL_TIMER
-    auto_del   = db_autodel if db_autodel is not None else Var.AUTO_DEL
-    mins, secs = divmod(timer_val, 60)
-    ad_status  = "ON ✅" if auto_del else "OFF ❌"
-    sa_count   = len(sub_admins)
+    timer_val   = db_timer   if db_timer   is not None else Var.DEL_TIMER
+    auto_del    = db_autodel if db_autodel is not None else Var.AUTO_DEL
+    batch_mode  = db_batch   if db_batch   is not None else False
+    mins, secs  = divmod(timer_val, 60)
+    ad_status   = "ON ✅" if auto_del   else "OFF ❌"
+    bm_status   = "ON ✅" if batch_mode else "OFF ❌"
+    sa_count    = len(sub_admins)
 
     return (
         "⚙️ <b>Bot Settings</b>\n\n"
@@ -51,14 +54,19 @@ async def _settings_text() -> str:
         f"• <b>File Store:</b>    <code>{Var.FILE_STORE}</code>\n"
         f"• <b>Auto Delete:</b>   {ad_status}\n"
         f"• <b>Delete Timer:</b>  <code>{timer_val}s</code>  ({mins}m {secs}s)\n"
+        f"• <b>Batch Mode:</b>    {bm_status}\n"
         f"• <b>Sub Admins:</b>    <code>{sa_count}</code>\n\n"
         "<i>Tap a button below to manage settings.</i>"
     )
 
+
 async def _settings_markup() -> InlineKeyboardMarkup:
-    db_autodel = await db.getAutoDelete()
-    auto_del   = db_autodel if db_autodel is not None else Var.AUTO_DEL
-    ad_label   = "🟢 Auto Delete: ON" if auto_del else "🔴 Auto Delete: OFF"
+    db_autodel  = await db.getAutoDelete()
+    db_batch    = await db.getBatchMode()
+    auto_del    = db_autodel if db_autodel is not None else Var.AUTO_DEL
+    batch_mode  = db_batch   if db_batch   is not None else False
+    ad_label    = "🟢 Auto Delete: ON"  if auto_del   else "🔴 Auto Delete: OFF"
+    bm_label    = "🟢 Batch Mode: ON"   if batch_mode else "🔴 Batch Mode: OFF"
 
     return InlineKeyboardMarkup([
         [
@@ -67,7 +75,10 @@ async def _settings_markup() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(ad_label, callback_data="stg_toggle_autodel"),
-        ]
+        ],
+        [
+            InlineKeyboardButton(bm_label, callback_data="stg_toggle_batchmode"),
+        ],
     ])
 
 
@@ -153,6 +164,27 @@ async def stg_toggle_autodel_cb(client, cq):
 
     status = "ON ✅" if new_val else "OFF ❌"
     await cq.answer(f"Auto Delete is now {status}", show_alert=True)
+
+    text   = await _settings_text()
+    markup = await _settings_markup()
+    await cq.edit_message_text(text, reply_markup=markup)
+
+
+# ─── Callback: Batch Mode toggle ─────────────────────────────────────────────
+
+@bot.on_callback_query(filters.regex(r"^stg_toggle_batchmode$"))
+async def stg_toggle_batchmode_cb(client, cq):
+    if not await _is_authorized(cq.from_user.id):
+        return await cq.answer("You are not authorized.", show_alert=True)
+
+    db_batch   = await db.getBatchMode()
+    current    = db_batch if db_batch is not None else False
+    new_val    = not current
+
+    await db.setBatchMode(new_val)
+
+    status = "ON ✅" if new_val else "OFF ❌"
+    await cq.answer(f"Batch Mode is now {status}", show_alert=True)
 
     text   = await _settings_text()
     markup = await _settings_markup()
