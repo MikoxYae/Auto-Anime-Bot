@@ -4,7 +4,7 @@ from time import time
 from os import path as ospath
 from aiofiles import open as aiopen
 from aiofiles.os import remove as aioremove, rename as aiorename
-from asyncio import sleep as asleep, gather, create_subprocess_shell, create_task
+from asyncio import sleep as asleep, gather, create_subprocess_shell, create_task, CancelledError
 from asyncio.subprocess import PIPE
 
 from bot import Var, bot_loop, ffpids_cache, LOGS
@@ -102,7 +102,13 @@ class FFEncoder:
         self.__proc = await create_subprocess_shell(ffcode, stdout=PIPE, stderr=PIPE)
         proc_pid = self.__proc.pid
         ffpids_cache.append(proc_pid)
-        _, return_code = await gather(create_task(self.progress()), self.__proc.wait())
+        progress_task = create_task(self.progress())
+        return_code = await self.__proc.wait()
+        progress_task.cancel()
+        try:
+            await progress_task
+        except (CancelledError, Exception):
+            pass
         ffpids_cache.remove(proc_pid)
 
         if ospath.exists(self.__prog_file):
