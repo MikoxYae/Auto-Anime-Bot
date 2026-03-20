@@ -79,10 +79,6 @@ class MongoDB:
 
     # ─── Channel Connection Methods ───────────────────────────────────────────
 
-    # FIX: Added ani_name_alt parameter so Romaji title is stored in MongoDB.
-    # This allows auto_animes.py _find_connection() to match by Romaji name
-    # when the English title doesn't appear in the SubsPlease torrent filename.
-
     async def connectChannel(self, ani_id, ani_name, channel_id, channel_name, invite_link, ani_name_alt=''):
         await self.__connections.update_one(
             {'_id': ani_id},
