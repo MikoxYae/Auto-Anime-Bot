@@ -7,15 +7,16 @@ class MongoDB:
         _token  = os.environ.get("BOT_TOKEN", "")
         _quals  = os.environ.get("QUALS", "360 480 720 1080").split()
 
-        self.__client      = AsyncIOMotorClient(uri)
-        self.__db          = self.__client[database_name]
-        self.__animes      = self.__db.animes[_token.split(':')[0]]
-        self.__connections = self.__db.channel_connections[_token.split(':')[0]]
-        self.__ffconfigs   = self.__db.ffconfigs[_token.split(':')[0]]
-        self.__rssfeeds    = self.__db.rssfeeds[_token.split(':')[0]]
-        self.__users       = self.__db.users[_token.split(':')[0]]
-        self.__broadcasts  = self.__db.broadcasts[_token.split(':')[0]]
-        self.__quals       = _quals
+        self.__client       = AsyncIOMotorClient(uri)
+        self.__db           = self.__client[database_name]
+        self.__animes       = self.__db.animes[_token.split(':')[0]]
+        self.__connections  = self.__db.channel_connections[_token.split(':')[0]]
+        self.__ffconfigs    = self.__db.ffconfigs[_token.split(':')[0]]
+        self.__rssfeeds     = self.__db.rssfeeds[_token.split(':')[0]]
+        self.__users        = self.__db.users[_token.split(':')[0]]
+        self.__broadcasts   = self.__db.broadcasts[_token.split(':')[0]]
+        self.__fsubchannels = self.__db.fsubchannels[_token.split(':')[0]]
+        self.__quals        = _quals
 
     # ─── Anime Methods ────────────────────────────────────────────────────────
 
@@ -168,20 +169,23 @@ class MongoDB:
     async def delBroadcast(self, broadcast_id: int) -> None:
         await self.__broadcasts.delete_one({'_id': broadcast_id})
 
-# ─── Force Sub Channel Methods ────────────────────────────────────────────
+    # ─── Force Sub Channel Methods ────────────────────────────────────────────
+
     async def addFSubChannel(self, channel_id: int) -> bool:
         existing = await self.__fsubchannels.find_one({'_id': channel_id})
         if existing:
             return False
         await self.__fsubchannels.insert_one({'_id': channel_id})
         return True
+
     async def delFSubChannel(self, channel_id: int) -> bool:
         result = await self.__fsubchannels.delete_one({'_id': channel_id})
         return result.deleted_count > 0
+
     async def getAllFSubChannels(self) -> list:
         docs = await self.__fsubchannels.find({}).to_list(length=None)
         return [doc['_id'] for doc in docs]
-        
+
 
 _mongo_uri = os.environ.get("MONGO_URI", "")
 db = MongoDB(_mongo_uri, "FZAutoAnimes")
