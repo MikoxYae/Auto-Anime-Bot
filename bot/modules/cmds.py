@@ -672,24 +672,35 @@ async def connect_cmd(client, message):
 
 # ─── Forward handler for /connect ─────────────────────────────────────────────
 
-@bot.on_message(filters.forwarded & private & admin_or_subadmin)
+@bot.on_message(filters.private & admin_or_subadmin)
 async def handle_forward(client, message):
     uid = message.from_user.id
     if uid not in pending_connect:
         return
 
-    ani_info = pending_connect.pop(uid)
+    # Support both old API (forward_from_chat) and new API (forward_origin)
+    channel = message.forward_from_chat
+    if not channel:
+        origin = getattr(message, 'forward_origin', None)
+        if origin:
+            channel = getattr(origin, 'chat', None)
 
-    if not message.forward_from_chat:
+    if not channel:
+        # Not a forwarded message at all — ignore silently so other handlers work
+        if not (message.forward_date or getattr(message, 'forward_origin', None)):
+            return
+        # It IS a forward but we couldn't get the channel
         return await sendMessage(
             message,
             "Could not get channel info.\n\n"
             "Make sure:\n"
             "• You forwarded from a <b>channel</b> (not a group)\n"
-            "• The channel's forward privacy is not restricted"
+            "• The channel's forward privacy is not restricted\n\n"
+            "<i>Try again — send /connect to restart.</i>"
         )
 
-    channel      = message.forward_from_chat
+    # Only pop pending state once we have valid channel info
+    ani_info     = pending_connect.pop(uid)
     channel_id   = channel.id
     channel_name = channel.title or "Unknown"
 
