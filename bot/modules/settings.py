@@ -18,9 +18,10 @@ private = filters.private
 
 
 # ─── Pending state dicts ──────────────────────────────────────────────────────
+# Each stores: uid → {'chat_id': ..., 'msg_id': ..., 'panel': 'subadmin'|'deltime'}
 
-pending_add_subadmin = {}   # uid → True
-pending_set_timer    = {}   # uid → True
+pending_add_subadmin = {}
+pending_set_timer    = {}
 
 
 # ─── Auth Helper ─────────────────────────────────────────────────────────────
@@ -103,8 +104,7 @@ async def _deltime_text_markup():
         "⏱ <b>Delete Time Settings</b>\n\n"
         f"• <b>Current Timer:</b> <code>{timer_val}s</code>  ({mins}m {secs}s)\n"
         f"• <b>Source:</b> {source}\n\n"
-        "<i>Files are auto-deleted after this duration.\n"
-        "Tap the button and send value in seconds.</i>"
+        "<i>Tap the button and send new value in seconds.</i>"
     )
 
     markup = InlineKeyboardMarkup([
@@ -144,9 +144,9 @@ async def stg_toggle_autodel_cb(client, cq):
     if not await _is_authorized(cq.from_user.id):
         return await cq.answer("You are not authorized.", show_alert=True)
 
-    db_autodel  = await db.getAutoDelete()
-    current     = db_autodel if db_autodel is not None else Var.AUTO_DEL
-    new_val     = not current
+    db_autodel = await db.getAutoDelete()
+    current    = db_autodel if db_autodel is not None else Var.AUTO_DEL
+    new_val    = not current
 
     await db.setAutoDelete(new_val)
     Var.AUTO_DEL = new_val
@@ -178,7 +178,10 @@ async def stg_add_sa_cb(client, cq):
     if cq.from_user.id not in Var.ADMINS:
         return await cq.answer("Only main admins can add sub admins.", show_alert=True)
 
-    pending_add_subadmin[cq.from_user.id] = True
+    pending_add_subadmin[cq.from_user.id] = {
+        'chat_id': cq.message.chat.id,
+        'msg_id':  cq.message.id
+    }
 
     await cq.edit_message_text(
         "👥 <b>Add Sub Admin</b>\n\n"
@@ -239,7 +242,10 @@ async def stg_set_timer_cb(client, cq):
     if not await _is_authorized(cq.from_user.id):
         return await cq.answer("You are not authorized.", show_alert=True)
 
-    pending_set_timer[cq.from_user.id] = True
+    pending_set_timer[cq.from_user.id] = {
+        'chat_id': cq.message.chat.id,
+        'msg_id':  cq.message.id
+    }
 
     await cq.edit_message_text(
         "⏱ <b>Set Delete Timer</b>\n\n"
@@ -266,7 +272,7 @@ async def stg_set_timer_cancel_cb(client, cq):
     await cq.answer("Cancelled.")
 
 
-# ─── Message handler: pending text inputs (group=1 to avoid conflicts) ────────
+# ─── Message handler: pending text inputs ────────────────────────────────────
 
 @bot.on_message(filters.text & private, group=1)
 async def handle_settings_input(client, message):
@@ -278,39 +284,54 @@ async def handle_settings_input(client, message):
             pending_add_subadmin.pop(uid, None)
             return
 
-        pending_add_subadmin.pop(uid)
-        raw = message.text.strip()
+        info = pending_add_subadmin.pop(uid)
+        raw  = message.text.strip()
+
+        try:
+            await message.delete()
+        except Exception:
+            pass
+
+        async def _edit_back_subadmin():
+            text, markup = await _subadmin_text_markup()
+            try:
+                await client.edit_message_text(
+                    info['chat_id'], info['msg_id'], text, reply_markup=markup
+                )
+            except Exception:
+                pass
 
         try:
             new_sa_id = int(raw)
         except ValueError:
-            await sendMessage(
-                message,
-                "❌ <b>Invalid ID.</b>\n\nUser ID must be a number.\nSend /settings and try again."
+            await client.send_message(
+                uid,
+                "❌ <b>Invalid ID.</b> User ID must be a number."
             )
+            await _edit_back_subadmin()
             return
 
         if new_sa_id in Var.ADMINS:
-            await sendMessage(
-                message,
+            await client.send_message(
+                uid,
                 f"⚠️ <code>{new_sa_id}</code> is already a main admin."
             )
+            await _edit_back_subadmin()
             return
 
         added = await db.addSubAdmin(new_sa_id)
         if added:
-            await sendMessage(
-                message,
-                f"✅ <b>Sub Admin Added!</b>\n\n"
-                f"• <b>User ID:</b> <code>{new_sa_id}</code>\n\n"
-                "<i>They can now manage Delete Time settings.\n"
-                "Send /settings to continue.</i>"
+            await client.send_message(
+                uid,
+                f"✅ <b>Sub Admin Added!</b>\n• <b>User ID:</b> <code>{new_sa_id}</code>"
             )
         else:
-            await sendMessage(
-                message,
+            await client.send_message(
+                uid,
                 f"⚠️ <code>{new_sa_id}</code> is already a sub admin."
             )
+
+        await _edit_back_subadmin()
         return
 
     # ── Set Timer ────────────────────────────────────────────────────────────
@@ -319,31 +340,47 @@ async def handle_settings_input(client, message):
             pending_set_timer.pop(uid, None)
             return
 
-        pending_set_timer.pop(uid)
-        raw = message.text.strip()
+        info = pending_set_timer.pop(uid)
+        raw  = message.text.strip()
+
+        try:
+            await message.delete()
+        except Exception:
+            pass
+
+        async def _edit_back_deltime():
+            text, markup = await _deltime_text_markup()
+            try:
+                await client.edit_message_text(
+                    info['chat_id'], info['msg_id'], text, reply_markup=markup
+                )
+            except Exception:
+                pass
 
         try:
             seconds = int(raw)
         except ValueError:
-            await sendMessage(
-                message,
-                "❌ <b>Invalid value.</b>\n\nMust be a whole number in seconds.\nSend /settings and try again."
+            await client.send_message(
+                uid,
+                "❌ <b>Invalid value.</b> Must be a whole number in seconds."
             )
+            await _edit_back_deltime()
             return
 
         if seconds < 30:
-            await sendMessage(
-                message,
-                "❌ <b>Too short.</b>\n\nMinimum is <b>30 seconds</b>.\nSend /settings and try again."
+            await client.send_message(
+                uid,
+                "❌ <b>Too short.</b> Minimum is <b>30 seconds</b>."
             )
+            await _edit_back_deltime()
             return
 
         await db.setDelTimer(seconds)
         mins, secs = divmod(seconds, 60)
-        await sendMessage(
-            message,
-            f"✅ <b>Delete Timer Updated!</b>\n\n"
-            f"• <b>New Timer:</b> <code>{seconds}s</code>  ({mins}m {secs}s)\n\n"
-            "<i>Send /settings to continue.</i>"
+        await client.send_message(
+            uid,
+            f"✅ <b>Timer set to {seconds}s</b>  ({mins}m {secs}s)"
         )
+
+        await _edit_back_deltime()
         return
