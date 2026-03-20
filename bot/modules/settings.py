@@ -26,7 +26,6 @@ pending_set_timer    = {}   # uid → True
 # ─── Auth Helper ─────────────────────────────────────────────────────────────
 
 async def _is_authorized(user_id: int) -> bool:
-    """Returns True if user is main admin OR sub admin."""
     if user_id in Var.ADMINS:
         return True
     return await db.isSubAdmin(user_id)
@@ -35,28 +34,38 @@ async def _is_authorized(user_id: int) -> bool:
 # ─── Panel Builders ───────────────────────────────────────────────────────────
 
 async def _settings_text() -> str:
-    sub_admins  = await db.getAllSubAdmins()
-    db_timer    = await db.getDelTimer()
-    timer_val   = db_timer if db_timer is not None else Var.DEL_TIMER
-    mins, secs  = divmod(timer_val, 60)
-    auto_del    = "ON ✅" if Var.AUTO_DEL else "OFF ❌"
-    sa_count    = len(sub_admins)
+    sub_admins = await db.getAllSubAdmins()
+    db_timer   = await db.getDelTimer()
+    db_autodel = await db.getAutoDelete()
+
+    timer_val  = db_timer if db_timer is not None else Var.DEL_TIMER
+    auto_del   = db_autodel if db_autodel is not None else Var.AUTO_DEL
+    mins, secs = divmod(timer_val, 60)
+    ad_status  = "ON ✅" if auto_del else "OFF ❌"
+    sa_count   = len(sub_admins)
 
     return (
         "⚙️ <b>Bot Settings</b>\n\n"
         f"• <b>Main Channel:</b>  <code>{Var.MAIN_CHANNEL}</code>\n"
         f"• <b>File Store:</b>    <code>{Var.FILE_STORE}</code>\n"
-        f"• <b>Auto Delete:</b>   {auto_del}\n"
+        f"• <b>Auto Delete:</b>   {ad_status}\n"
         f"• <b>Delete Timer:</b>  <code>{timer_val}s</code>  ({mins}m {secs}s)\n"
         f"• <b>Sub Admins:</b>    <code>{sa_count}</code>\n\n"
         "<i>Tap a button below to manage settings.</i>"
     )
 
-def _settings_markup() -> InlineKeyboardMarkup:
+async def _settings_markup() -> InlineKeyboardMarkup:
+    db_autodel = await db.getAutoDelete()
+    auto_del   = db_autodel if db_autodel is not None else Var.AUTO_DEL
+    ad_label   = "🟢 Auto Delete: ON" if auto_del else "🔴 Auto Delete: OFF"
+
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("👥 Sub Admins",  callback_data="stg_subadmin"),
             InlineKeyboardButton("⏱ Delete Time", callback_data="stg_deltime"),
+        ],
+        [
+            InlineKeyboardButton(ad_label, callback_data="stg_toggle_autodel"),
         ]
     ])
 
@@ -95,7 +104,7 @@ async def _deltime_text_markup():
         f"• <b>Current Timer:</b> <code>{timer_val}s</code>  ({mins}m {secs}s)\n"
         f"• <b>Source:</b> {source}\n\n"
         "<i>Files are auto-deleted after this duration.\n"
-        "Send a new value in seconds to change it.</i>"
+        "Tap the button and send value in seconds.</i>"
     )
 
     markup = InlineKeyboardMarkup([
@@ -110,20 +119,44 @@ async def _deltime_text_markup():
 
 @bot.on_message(command("settings") & private & admin_filter())
 async def settings_cmd(client, message):
-    text = await _settings_text()
-    await sendMessage(message, text, buttons=_settings_markup())
+    text   = await _settings_text()
+    markup = await _settings_markup()
+    await sendMessage(message, text, buttons=markup)
 
 
-# ─── Callback: main back button ───────────────────────────────────────────────
+# ─── Callback: back to main panel ────────────────────────────────────────────
 
 @bot.on_callback_query(filters.regex(r"^stg_back$"))
 async def stg_back_cb(client, cq):
     if not await _is_authorized(cq.from_user.id):
         return await cq.answer("You are not authorized.", show_alert=True)
 
-    text = await _settings_text()
-    await cq.edit_message_text(text, reply_markup=_settings_markup())
+    text   = await _settings_text()
+    markup = await _settings_markup()
+    await cq.edit_message_text(text, reply_markup=markup)
     await cq.answer()
+
+
+# ─── Callback: Auto Delete toggle ────────────────────────────────────────────
+
+@bot.on_callback_query(filters.regex(r"^stg_toggle_autodel$"))
+async def stg_toggle_autodel_cb(client, cq):
+    if not await _is_authorized(cq.from_user.id):
+        return await cq.answer("You are not authorized.", show_alert=True)
+
+    db_autodel  = await db.getAutoDelete()
+    current     = db_autodel if db_autodel is not None else Var.AUTO_DEL
+    new_val     = not current
+
+    await db.setAutoDelete(new_val)
+    Var.AUTO_DEL = new_val
+
+    status = "ON ✅" if new_val else "OFF ❌"
+    await cq.answer(f"Auto Delete is now {status}", show_alert=True)
+
+    text   = await _settings_text()
+    markup = await _settings_markup()
+    await cq.edit_message_text(text, reply_markup=markup)
 
 
 # ─── Callback: Sub Admins panel ───────────────────────────────────────────────
@@ -149,9 +182,8 @@ async def stg_add_sa_cb(client, cq):
 
     await cq.edit_message_text(
         "👥 <b>Add Sub Admin</b>\n\n"
-        "Send the <b>Telegram User ID</b> of the person you want to add as sub admin.\n\n"
-        "<i>They will be able to manage Delete Time settings.\n"
-        "Send /cancel to abort.</i>",
+        "Send the <b>Telegram User ID</b> of the new sub admin.\n\n"
+        "<i>They will be able to manage Delete Time settings.</i>",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("❌ Cancel", callback_data="stg_add_sa_cancel")]
         ])
@@ -179,10 +211,10 @@ async def stg_del_sa_cb(client, cq):
     uid_to_remove = int(cq.matches[0].group(1))
     removed = await db.delSubAdmin(uid_to_remove)
 
-    if removed:
-        await cq.answer(f"Removed sub admin {uid_to_remove}.", show_alert=True)
-    else:
-        await cq.answer("Sub admin not found.", show_alert=True)
+    await cq.answer(
+        f"Removed {uid_to_remove}." if removed else "Not found.",
+        show_alert=True
+    )
 
     text, markup = await _subadmin_text_markup()
     await cq.edit_message_text(text, reply_markup=markup)
@@ -216,7 +248,7 @@ async def stg_set_timer_cb(client, cq):
         "• <code>300</code>  →  5 minutes\n"
         "• <code>600</code>  →  10 minutes\n"
         "• <code>1800</code> →  30 minutes\n\n"
-        "<i>Minimum: 30 seconds. Send /cancel to abort.</i>",
+        "<i>Minimum: 30 seconds.</i>",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("❌ Cancel", callback_data="stg_set_timer_cancel")]
         ])
@@ -234,13 +266,13 @@ async def stg_set_timer_cancel_cb(client, cq):
     await cq.answer("Cancelled.")
 
 
-# ─── Message handler: process pending text inputs ────────────────────────────
+# ─── Message handler: pending text inputs (group=1 to avoid conflicts) ────────
 
-@bot.on_message(filters.text & filters.regex(r'^[^/]') & private)
+@bot.on_message(filters.text & private, group=1)
 async def handle_settings_input(client, message):
     uid = message.from_user.id
 
-    # ── Add Sub Admin input ──────────────────────────────────────────────────
+    # ── Add Sub Admin ────────────────────────────────────────────────────────
     if uid in pending_add_subadmin:
         if uid not in Var.ADMINS:
             pending_add_subadmin.pop(uid, None)
@@ -271,7 +303,8 @@ async def handle_settings_input(client, message):
                 message,
                 f"✅ <b>Sub Admin Added!</b>\n\n"
                 f"• <b>User ID:</b> <code>{new_sa_id}</code>\n\n"
-                "<i>They can now manage Delete Time settings.</i>"
+                "<i>They can now manage Delete Time settings.\n"
+                "Send /settings to continue.</i>"
             )
         else:
             await sendMessage(
@@ -280,7 +313,7 @@ async def handle_settings_input(client, message):
             )
         return
 
-    # ── Set Timer input ──────────────────────────────────────────────────────
+    # ── Set Timer ────────────────────────────────────────────────────────────
     if uid in pending_set_timer:
         if not await _is_authorized(uid):
             pending_set_timer.pop(uid, None)
@@ -301,7 +334,7 @@ async def handle_settings_input(client, message):
         if seconds < 30:
             await sendMessage(
                 message,
-                "❌ <b>Too short.</b>\n\nMinimum timer is <b>30 seconds</b>.\nSend /settings and try again."
+                "❌ <b>Too short.</b>\n\nMinimum is <b>30 seconds</b>.\nSend /settings and try again."
             )
             return
 
@@ -311,6 +344,6 @@ async def handle_settings_input(client, message):
             message,
             f"✅ <b>Delete Timer Updated!</b>\n\n"
             f"• <b>New Timer:</b> <code>{seconds}s</code>  ({mins}m {secs}s)\n\n"
-            "<i>This will take effect for new file sends.</i>"
+            "<i>Send /settings to continue.</i>"
         )
         return
