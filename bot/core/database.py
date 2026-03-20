@@ -193,7 +193,6 @@ class MongoDB:
         return [doc['_id'] for doc in docs]
 
     async def getAllFSubChannelsWithMode(self) -> list:
-        """Returns list of dicts: {id, request_mode}"""
         docs = await self.__fsubchannels.find({}).to_list(length=None)
         return [
             {'id': doc['_id'], 'request_mode': doc.get('request_mode', False)}
@@ -201,12 +200,10 @@ class MongoDB:
         ]
 
     async def getFSubChannelMode(self, channel_id: int) -> bool:
-        """Returns True if request mode is ON for this channel, False otherwise."""
         doc = await self.__fsubchannels.find_one({'_id': channel_id}, {'request_mode': 1})
         return doc.get('request_mode', False) if doc else False
 
     async def setFSubChannelMode(self, channel_id: int, request_mode: bool) -> None:
-        """Set request_mode ON (True) or OFF (False) for a channel."""
         await self.__fsubchannels.update_one(
             {'_id': channel_id},
             {'$set': {'request_mode': request_mode}},
@@ -216,7 +213,6 @@ class MongoDB:
     # ─── Join Request Methods ─────────────────────────────────────────────────
 
     async def saveJoinRequest(self, channel_id: int, user_id: int) -> None:
-        """Record that a user has sent a join request to a channel."""
         doc_id = f"{channel_id}:{user_id}"
         await self.__joinrequests.update_one(
             {'_id': doc_id},
@@ -225,27 +221,22 @@ class MongoDB:
         )
 
     async def hasJoinRequest(self, channel_id: int, user_id: int) -> bool:
-        """Check if a user has a pending join request for a channel."""
         doc_id = f"{channel_id}:{user_id}"
         return bool(await self.__joinrequests.find_one({'_id': doc_id}))
 
     async def delJoinRequest(self, channel_id: int, user_id: int) -> None:
-        """Remove a join request record (e.g. after user actually joins)."""
         doc_id = f"{channel_id}:{user_id}"
         await self.__joinrequests.delete_one({'_id': doc_id})
 
     async def getJoinRequestCount(self, channel_id: int) -> int:
-        """Total number of pending join requests tracked for a channel."""
         return await self.__joinrequests.count_documents({'channel_id': channel_id})
 
     async def getTotalJoinRequests(self) -> int:
-        """Total join requests across all channels."""
         return await self.__joinrequests.count_documents({})
 
     # ─── Sub Admin Methods ────────────────────────────────────────────────────
 
     async def addSubAdmin(self, user_id: int) -> bool:
-        """Add a sub admin. Returns False if already exists."""
         existing = await self.__subadmins.find_one({'_id': user_id})
         if existing:
             return False
@@ -253,23 +244,19 @@ class MongoDB:
         return True
 
     async def delSubAdmin(self, user_id: int) -> bool:
-        """Remove a sub admin. Returns False if not found."""
         result = await self.__subadmins.delete_one({'_id': user_id})
         return result.deleted_count > 0
 
     async def getAllSubAdmins(self) -> list:
-        """Returns list of sub admin user IDs."""
         docs = await self.__subadmins.find({}, {'_id': 1}).to_list(length=None)
         return [doc['_id'] for doc in docs]
 
     async def isSubAdmin(self, user_id: int) -> bool:
-        """Check if a user is a sub admin."""
         return bool(await self.__subadmins.find_one({'_id': user_id}))
 
     # ─── Bot Settings Methods ─────────────────────────────────────────────────
 
     async def setDelTimer(self, seconds: int) -> None:
-        """Save a custom delete timer (in seconds) to the database."""
         await self.__botsettings.update_one(
             {'_id': 'del_timer'},
             {'$set': {'value': seconds}},
@@ -277,8 +264,18 @@ class MongoDB:
         )
 
     async def getDelTimer(self) -> int | None:
-        """Get saved delete timer. Returns None if not set in DB (use Var.DEL_TIMER fallback)."""
         doc = await self.__botsettings.find_one({'_id': 'del_timer'})
+        return doc['value'] if doc else None
+
+    async def setAutoDelete(self, enabled: bool) -> None:
+        await self.__botsettings.update_one(
+            {'_id': 'auto_delete'},
+            {'$set': {'value': enabled}},
+            upsert=True
+        )
+
+    async def getAutoDelete(self) -> bool | None:
+        doc = await self.__botsettings.find_one({'_id': 'auto_delete'})
         return doc['value'] if doc else None
 
 
