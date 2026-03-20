@@ -13,6 +13,8 @@ class MongoDB:
         self.__connections = self.__db.channel_connections[_token.split(':')[0]]
         self.__ffconfigs   = self.__db.ffconfigs[_token.split(':')[0]]
         self.__rssfeeds    = self.__db.rssfeeds[_token.split(':')[0]]
+        self.__users       = self.__db.users[_token.split(':')[0]]
+        self.__broadcasts  = self.__db.broadcasts[_token.split(':')[0]]
         self.__quals       = _quals
 
     # ─── Anime Methods ────────────────────────────────────────────────────────
@@ -130,6 +132,41 @@ class MongoDB:
     async def getAllRSS(self) -> list:
         docs = await self.__rssfeeds.find({}).to_list(length=None)
         return [doc['_id'] for doc in docs]
+
+    # ─── User Methods ─────────────────────────────────────────────────────────
+
+    async def addUser(self, user_id: int) -> None:
+        await self.__users.update_one(
+            {'_id': user_id},
+            {'$set': {'_id': user_id}},
+            upsert=True
+        )
+
+    async def delUser(self, user_id: int) -> None:
+        await self.__users.delete_one({'_id': user_id})
+
+    async def getAllUsers(self) -> list:
+        docs = await self.__users.find({}, {'_id': 1}).to_list(length=None)
+        return [doc['_id'] for doc in docs]
+
+    async def getUserCount(self) -> int:
+        return await self.__users.count_documents({})
+
+    # ─── Broadcast Methods ────────────────────────────────────────────────────
+
+    async def saveBroadcast(self, broadcast_id: int, msg_map: dict) -> None:
+        await self.__broadcasts.update_one(
+            {'_id': broadcast_id},
+            {'$set': {'messages': msg_map}},
+            upsert=True
+        )
+
+    async def getBroadcast(self, broadcast_id: int) -> dict:
+        doc = await self.__broadcasts.find_one({'_id': broadcast_id})
+        return doc.get('messages', {}) if doc else {}
+
+    async def delBroadcast(self, broadcast_id: int) -> None:
+        await self.__broadcasts.delete_one({'_id': broadcast_id})
 
 
 _mongo_uri = os.environ.get("MONGO_URI", "")
