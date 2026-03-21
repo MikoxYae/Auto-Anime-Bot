@@ -18,7 +18,6 @@ private = filters.private
 
 
 # ─── Pending state dicts ──────────────────────────────────────────────────────
-# Each stores: uid → {'chat_id': ..., 'msg_id': ..., 'panel': 'subadmin'|'deltime'}
 
 pending_add_subadmin = {}
 pending_set_timer    = {}
@@ -149,8 +148,14 @@ async def _sticker_text_markup():
     )
 
     markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✏️ Set Main Channel Sticker",      callback_data="stg_set_sticker_main")],
-        [InlineKeyboardButton("✏️ Set Connected Channel Sticker", callback_data="stg_set_sticker_connected")],
+        [
+            InlineKeyboardButton("✏️ Set Main Sticker",      callback_data="stg_set_sticker_main"),
+            InlineKeyboardButton("🗑 Remove",                 callback_data="stg_del_sticker_main"),
+        ],
+        [
+            InlineKeyboardButton("✏️ Set Connected Sticker", callback_data="stg_set_sticker_connected"),
+            InlineKeyboardButton("🗑 Remove",                 callback_data="stg_del_sticker_connected"),
+        ],
         [InlineKeyboardButton("◀️ Back", callback_data="stg_back")],
     ])
 
@@ -271,6 +276,23 @@ async def stg_set_sticker_cancel_cb(client, cq):
     await cq.answer("Cancelled.")
 
 
+# ─── Callback: Remove sticker ─────────────────────────────────────────────────
+
+@bot.on_callback_query(filters.regex(r"^stg_del_sticker_(main|connected)$"))
+async def stg_del_sticker_cb(client, cq):
+    if not await _is_authorized(cq.from_user.id):
+        return await cq.answer("You are not authorized.", show_alert=True)
+
+    sticker_type = cq.matches[0].group(1)
+    label        = "Main Channel" if sticker_type == "main" else "Connected Channel"
+
+    await db.deleteSticker(sticker_type)
+    await cq.answer(f"✅ {label} sticker removed!", show_alert=True)
+
+    text, markup = await _sticker_text_markup()
+    await cq.edit_message_text(text, reply_markup=markup)
+
+
 # ─── Callback: Sub Admins panel ───────────────────────────────────────────────
 
 @bot.on_callback_query(filters.regex(r"^stg_subadmin$"))
@@ -283,7 +305,7 @@ async def stg_subadmin_cb(client, cq):
     await cq.answer()
 
 
-# ─── Callback: Add Sub Admin trigger ─────────────────────────────────────────
+# ─── Callback: Add Sub Admin ──────────────────────────────────────────────────
 
 @bot.on_callback_query(filters.regex(r"^stg_add_sa$"))
 async def stg_add_sa_cb(client, cq):
@@ -297,23 +319,13 @@ async def stg_add_sa_cb(client, cq):
 
     await cq.edit_message_text(
         "👥 <b>Add Sub Admin</b>\n\n"
-        "Send the <b>Telegram User ID</b> of the new sub admin.\n\n"
-        "<i>They will be able to manage Delete Time settings.</i>",
+        "Send the <b>User ID</b> of the person you want to add as sub admin.\n\n"
+        "<i>They will be able to use bot management commands.</i>",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Cancel", callback_data="stg_add_sa_cancel")]
+            [InlineKeyboardButton("❌ Cancel", callback_data="stg_subadmin")]
         ])
     )
     await cq.answer()
-
-
-# ─── Callback: Cancel Add Sub Admin ──────────────────────────────────────────
-
-@bot.on_callback_query(filters.regex(r"^stg_add_sa_cancel$"))
-async def stg_add_sa_cancel_cb(client, cq):
-    pending_add_subadmin.pop(cq.from_user.id, None)
-    text, markup = await _subadmin_text_markup()
-    await cq.edit_message_text(text, reply_markup=markup)
-    await cq.answer("Cancelled.")
 
 
 # ─── Callback: Remove Sub Admin ──────────────────────────────────────────────
@@ -324,12 +336,12 @@ async def stg_del_sa_cb(client, cq):
         return await cq.answer("Only main admins can remove sub admins.", show_alert=True)
 
     uid_to_remove = int(cq.matches[0].group(1))
-    removed = await db.delSubAdmin(uid_to_remove)
+    removed       = await db.delSubAdmin(uid_to_remove)
 
-    await cq.answer(
-        f"Removed {uid_to_remove}." if removed else "Not found.",
-        show_alert=True
-    )
+    if removed:
+        await cq.answer(f"✅ Sub admin {uid_to_remove} removed!", show_alert=True)
+    else:
+        await cq.answer(f"⚠️ {uid_to_remove} was not a sub admin.", show_alert=True)
 
     text, markup = await _subadmin_text_markup()
     await cq.edit_message_text(text, reply_markup=markup)
@@ -362,35 +374,21 @@ async def stg_set_timer_cb(client, cq):
     await cq.edit_message_text(
         "⏱ <b>Set Delete Timer</b>\n\n"
         "Send the new timer value in <b>seconds</b>.\n\n"
-        "<b>Examples:</b>\n"
-        "• <code>300</code>  →  5 minutes\n"
-        "• <code>600</code>  →  10 minutes\n"
-        "• <code>1800</code> →  30 minutes\n\n"
         "<i>Minimum: 30 seconds.</i>",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Cancel", callback_data="stg_set_timer_cancel")]
+            [InlineKeyboardButton("❌ Cancel", callback_data="stg_deltime")]
         ])
     )
     await cq.answer()
 
 
-# ─── Callback: Cancel Set Timer ──────────────────────────────────────────────
-
-@bot.on_callback_query(filters.regex(r"^stg_set_timer_cancel$"))
-async def stg_set_timer_cancel_cb(client, cq):
-    pending_set_timer.pop(cq.from_user.id, None)
-    text, markup = await _deltime_text_markup()
-    await cq.edit_message_text(text, reply_markup=markup)
-    await cq.answer("Cancelled.")
-
-
-# ─── Message handler: pending text inputs ────────────────────────────────────
+# ─── Message handler: text input (sub admin / timer) ─────────────────────────
 
 @bot.on_message(filters.text & private, group=1)
-async def handle_settings_input(client, message):
+async def handle_text_input(client, message):
     uid = message.from_user.id
 
-    # ── Add Sub Admin ────────────────────────────────────────────────────────
+    # ── Add Sub Admin ─────────────────────────────────────────────────────────
     if uid in pending_add_subadmin:
         if uid not in Var.ADMINS:
             pending_add_subadmin.pop(uid, None)
@@ -476,10 +474,7 @@ async def handle_settings_input(client, message):
                 uid,
                 "❌ <b>Invalid value.</b> Must be a whole number in seconds."
             )
-            await _edit_back_deltime()
-            return
-
-        if seconds < 30:
+            await _edit_back_delif seconds < 30:
             await client.send_message(
                 uid,
                 "❌ <b>Too short.</b> Minimum is <b>30 seconds</b>."
