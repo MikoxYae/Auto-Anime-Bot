@@ -7,25 +7,31 @@ class MongoDB:
         _token  = os.environ.get("BOT_TOKEN", "")
         _quals  = os.environ.get("QUALS", "360 480 720 1080").split()
 
-        self.__client        = AsyncIOMotorClient(uri)
-        self.__db            = self.__client[database_name]
-        self.__animes        = self.__db.animes[_token.split(':')[0]]
-        self.__connections   = self.__db.channel_connections[_token.split(':')[0]]
-        self.__ffconfigs     = self.__db.ffconfigs[_token.split(':')[0]]
-        self.__rssfeeds      = self.__db.rssfeeds[_token.split(':')[0]]
-        self.__users         = self.__db.users[_token.split(':')[0]]
-        self.__broadcasts    = self.__db.broadcasts[_token.split(':')[0]]
-        self.__fsubchannels  = self.__db.fsubchannels[_token.split(':')[0]]
-        self.__joinrequests  = self.__db.joinrequests[_token.split(':')[0]]
-        self.__subadmins     = self.__db.subadmins[_token.split(':')[0]]
-        self.__botsettings   = self.__db.botsettings[_token.split(':')[0]]
-        self.__quals         = _quals
+        self.__client       = AsyncIOMotorClient(uri)
+        self.__db           = self.__client[database_name]
+
+        # Collection shortcuts — all namespaced by bot token prefix
+        _pfx = _token.split(':')[0]
+
+        self.__animes        = self.__db.animes[_pfx]
+        self.__connections   = self.__db.channel_connections[_pfx]
+        self.__ffconfigs     = self.__db.ffconfigs[_pfx]
+        self.__rssfeeds      = self.__db.rssfeeds[_pfx]
+        self.__users         = self.__db.users[_pfx]
+        self.__broadcasts    = self.__db.broadcasts[_pfx]
+        self.__fsubchannels  = self.__db.fsubchannels[_pfx]
+        self.__joinrequests  = self.__db.joinrequests[_pfx]
+        self.__subadmins     = self.__db.subadmins[_pfx]
+        self.__botsettings   = self.__db.botsettings[_pfx]
+        self.__batchfiles    = self.__db.batchfiles[_pfx]   # NEW — batch file store
+
+        self.__quals = _quals
 
     # ─── Anime Methods ────────────────────────────────────────────────────────
 
     async def getAnime(self, ani_id):
-        botset = await self.__animes.find_one({'_id': ani_id})
-        return botset or {}
+        doc = await self.__animes.find_one({'_id': ani_id})
+        return doc or {}
 
     async def saveAnime(self, ani_id, ep, qual, post_id=None):
         quals = (await self.getAnime(ani_id)).get(ep, {q: False for q in self.__quals})
@@ -38,7 +44,7 @@ class MongoDB:
         if post_id:
             await self.__animes.update_one(
                 {'_id': ani_id},
-                {'$set': {"msg_id": post_id}},
+                {'$set': {'msg_id': post_id}},
                 upsert=True
             )
 
@@ -87,7 +93,7 @@ class MongoDB:
                 'ani_name_alt': ani_name_alt,
                 'channel_id':   channel_id,
                 'channel_name': channel_name,
-                'invite_link':  invite_link
+                'invite_link':  invite_link,
             }},
             upsert=True
         )
@@ -304,8 +310,6 @@ class MongoDB:
         )
 
     async def delStickerMain(self) -> None:
-        # Store 'REMOVED' so auto_animes knows not to send any sticker
-        # (deleting the document would cause fallback to the default sticker)
         await self.__botsettings.update_one(
             {'_id': 'sticker_main'},
             {'$set': {'value': 'REMOVED'}},
@@ -324,13 +328,87 @@ class MongoDB:
         )
 
     async def delStickerConnect(self) -> None:
-        # Store 'REMOVED' so auto_animes knows not to send any sticker
-        # (deleting the document would cause fallback to the default sticker)
         await self.__botsettings.update_one(
             {'_id': 'sticker_connect'},
             {'$set': {'value': 'REMOVED'}},
             upsert=True
         )
+
+    # ─── Batch File Methods ───────────────────────────────────────────────────
+    #
+    # DB document structure (collection: batchfiles):
+    # {
+    #   _id:           "{ani_id}_{qual}"   e.g. "12345_360"
+    #   ani_id:        int | None
+    #   qual:          str                 e.g. "360"
+    #   file_ids:      [int, int, ...]     FILE_STORE message IDs in episode order
+    #   title:         str                 display title
+    #   total_eps:     int                 number of episodes stored
+    #   poster:        str | None          photo URL or file_id for delivery
+    #   original_name: str                 original torrent/magnet display name
+    # }
+
+    async def saveBatchFiles(
+        self,
+        ani_id,
+        qual: str,
+        file_ids: list,
+        title: str,
+        total_eps: int,
+        poster: str | None = None,
+        original_name: str = "",
+    ) -> None:
+        """
+        Save or update the list of FILE_STORE message IDs for a batch quality.
+        Called once per quality after all episodes of that quality are uploaded.
+        """
+        doc_id = f"{ani_id}_{qual}"
+        await self.__batchfiles.update_one(
+            {'_id': doc_id},
+            {'$set': {
+                'ani_id':        ani_id,
+                'qual':          qual,
+                'file_ids':      file_ids,
+                'title':         title,
+                'total_eps':     total_eps,
+                'poster':        poster,
+                'original_name': original_name,
+            }},
+            upsert=True
+        )
+
+    async def getBatchFiles(self, ani_id, qual: str) -> dict | None:
+        """
+        Retrieve batch data for a specific anime + quality.
+        Returns the full document dict, or None if not found.
+        """
+        doc_id = f"{ani_id}_{qual}"
+        return await self.__batchfiles.find_one({'_id': doc_id})
+
+    async def getAllBatchQualities(self, ani_id) -> list[str]:
+        """
+        Return the list of qualities that have been saved for an anime.
+        e.g. ["360", "480", "720"]
+        """
+        docs = await self.__batchfiles.find(
+            {'ani_id': ani_id},
+            {'qual': 1}
+        ).to_list(length=None)
+        return [doc['qual'] for doc in docs]
+
+    async def delBatchFiles(self, ani_id) -> int:
+        """
+        Delete ALL batch quality data for an anime.
+        Returns the number of documents deleted.
+        """
+        result = await self.__batchfiles.delete_many({'ani_id': ani_id})
+        return result.deleted_count
+
+    async def delBatchQuality(self, ani_id, qual: str) -> bool:
+        """Delete batch data for a specific anime + quality only."""
+        doc_id = f"{ani_id}_{qual}"
+        result = await self.__batchfiles.delete_one({'_id': doc_id})
+        return result.deleted_count > 0
 
 
 _mongo_uri = os.environ.get("MONGO_URI", "")
