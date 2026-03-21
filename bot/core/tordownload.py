@@ -1,9 +1,11 @@
 import re
 import struct
 import socket
-from os import path as ospath, listdir, walk
+from os import path as ospath, listdir, walk, getcwd
 from urllib.parse import urlparse, urlencode, quote_from_bytes
-from asyncio import wait_for, TimeoutError as AsyncTimeoutError
+from asyncio import wait_for, TimeoutError as AsyncTimeoutError, sleep as asleep, create_task, CancelledError
+from time import time
+from math import floor
 
 from aiofiles import open as aiopen
 from aiofiles.os import path as aiopath, remove as aioremove, mkdir
@@ -12,7 +14,7 @@ from anitopy import parse as anitopy_parse
 from torrentp import TorrentDownloader as _TorrentDownloader
 
 from bot import LOGS
-from bot.core.func_utils import handle_logs
+from bot.core.func_utils import handle_logs, editMessage, convertBytes, convertTime
 
 VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.webm', '.flv', '.m4v'}
 
@@ -310,6 +312,127 @@ async def check_torrent_active(magnet_or_url: str, min_seeders: int = 1, timeout
     return False
 
 
+# ─── Download helpers ─────────────────────────────────────────────────────────
+
+def _get_dir_size(path: str) -> int:
+    """Return total bytes of all files under path (including subdirs)."""
+    total = 0
+    try:
+        for root, _, files in walk(path):
+            for fname in files:
+                try:
+                    total += ospath.getsize(ospath.join(root, fname))
+                except OSError:
+                    pass
+    except Exception:
+        pass
+    return total
+
+
+def _apply_fast_settings(torp) -> None:
+    """
+    Tune the libtorrent session inside a torrentp TorrentDownloader for
+    maximum download throughput.  Silently ignored if the attribute layout
+    doesn't match (different torrentp versions).
+    """
+    try:
+        ses = getattr(torp, 'session', None) or getattr(torp, '_session', None)
+        if ses is None:
+            return
+        ses.apply_settings({
+            'connections_limit':          500,
+            'active_downloads':           10,
+            'active_seeds':               5,
+            'upload_rate_limit':          0,
+            'download_rate_limit':        0,
+            'unchoke_slots_limit':        8,
+            'request_queue_time':         3,
+            'max_out_request_queue':      1500,
+            'whole_pieces_threshold':     20,
+            'peer_connect_timeout':       4,
+            'inactivity_timeout':         60,
+        })
+        LOGS.info("libtorrent fast settings applied")
+    except Exception as e:
+        LOGS.warning(f"Could not apply libtorrent fast settings: {e}")
+
+
+async def _progress_monitor(
+    torp,
+    stat_msg,
+    name: str,
+    downdir: str,
+    interval: int = 30,
+) -> None:
+    """
+    Background task: updates stat_msg with download progress every `interval` seconds.
+    Tries the libtorrent handle first (accurate total + speed), falls back to
+    scanning the download directory for bytes written.
+    """
+    start_time  = time()
+    last_bytes  = 0
+
+    # give torrentp a moment to set up the handle
+    await asleep(5)
+
+    while True:
+        await asleep(interval)
+        try:
+            elapsed = time() - start_time
+
+            # ── Try libtorrent handle ─────────────────────────────────────────
+            handle = (
+                getattr(torp, 'handle',  None)
+                or getattr(torp, '_handle', None)
+            )
+
+            if handle is not None and hasattr(handle, 'status'):
+                s           = handle.status()
+                downloaded  = int(s.total_wanted_done)
+                total       = int(s.total_wanted)
+                dl_rate     = int(s.download_rate)      # bytes/s
+
+                speed_str   = f"{convertBytes(dl_rate)}/s" if dl_rate > 0 else "—"
+                eta_secs    = ((total - downloaded) / dl_rate) if dl_rate > 0 else 0
+                eta_str     = convertTime(eta_secs) if eta_secs > 0 else "—"
+                percent     = round((downloaded / total) * 100, 1) if total > 0 else 0
+                bar         = floor(percent / 8) * "█" + (12 - floor(percent / 8)) * "▒"
+
+                progress_str = (
+                    f"‣ <b>Anime Name :</b> <b><i>{name}</i></b>\n\n"
+                    f"<blockquote>⬇️ <b>Downloading...</b>\n"
+                    f"   <code>[{bar}]</code> {percent}%\n\n"
+                    f"   ‣ <b>Downloaded :</b> {convertBytes(downloaded)} / {convertBytes(total)}\n"
+                    f"   ‣ <b>Speed :</b> {speed_str}\n"
+                    f"   ‣ <b>ETA :</b> {eta_str}\n"
+                    f"   ‣ <b>Elapsed :</b> {convertTime(elapsed)}</blockquote>"
+                )
+
+            else:
+                # ── Fallback: measure directory growth ───────────────────────
+                cur_bytes   = _get_dir_size(downdir)
+                delta       = cur_bytes - last_bytes
+                speed       = delta / interval if interval > 0 else 0
+                last_bytes  = cur_bytes
+
+                speed_str   = f"{convertBytes(speed)}/s" if speed > 0 else "—"
+
+                progress_str = (
+                    f"‣ <b>Anime Name :</b> <b><i>{name}</i></b>\n\n"
+                    f"<blockquote>⬇️ <b>Downloading...</b>\n\n"
+                    f"   ‣ <b>Downloaded :</b> {convertBytes(cur_bytes)}\n"
+                    f"   ‣ <b>Speed :</b> {speed_str}\n"
+                    f"   ‣ <b>Elapsed :</b> {convertTime(elapsed)}</blockquote>"
+                )
+
+            await editMessage(stat_msg, progress_str)
+
+        except CancelledError:
+            break
+        except Exception as e:
+            LOGS.warning(f"Download progress update error: {e}")
+
+
 # ─── TorDownloader ────────────────────────────────────────────────────────────
 
 class TorDownloader:
@@ -318,18 +441,43 @@ class TorDownloader:
         self.__torpath = "torrents/"
 
     @handle_logs
-    async def download(self, torrent, name=None):
+    async def download(self, torrent, name=None, stat_msg=None):
         before = set(listdir(self.__downdir)) if ospath.exists(self.__downdir) else set()
+
+        torp = None
+        torfile_to_remove = None
 
         if torrent.startswith("magnet:"):
             torp = _TorrentDownloader(torrent, self.__downdir)
-            await torp.start_download()
         elif torfile := await self.get_torfile(torrent):
             torp = _TorrentDownloader(torfile, self.__downdir)
-            await torp.start_download()
-            await aioremove(torfile)
+            torfile_to_remove = torfile
         else:
             return None
+
+        _apply_fast_settings(torp)
+
+        # Start progress monitor as background task if we have a message to update
+        progress_task = None
+        if stat_msg and name:
+            progress_task = create_task(
+                _progress_monitor(torp, stat_msg, name, self.__downdir, interval=30)
+            )
+
+        try:
+            await torp.start_download()
+        finally:
+            if progress_task and not progress_task.done():
+                progress_task.cancel()
+                try:
+                    await progress_task
+                except (CancelledError, Exception):
+                    pass
+            if torfile_to_remove:
+                try:
+                    await aioremove(torfile_to_remove)
+                except Exception:
+                    pass
 
         after       = set(listdir(self.__downdir))
         new_entries = after - before
@@ -353,7 +501,7 @@ class TorDownloader:
         return ospath.join(self.__downdir, name) if name else None
 
     @handle_logs
-    async def download_batch(self, torrent, name=None) -> list[str]:
+    async def download_batch(self, torrent, name=None, stat_msg=None) -> list[str]:
         """
         Download a batch torrent and return ALL video files sorted by episode.
         Used exclusively for batch mode processing.
@@ -361,15 +509,39 @@ class TorDownloader:
         """
         before = set(listdir(self.__downdir)) if ospath.exists(self.__downdir) else set()
 
+        torp = None
+        torfile_to_remove = None
+
         if torrent.startswith("magnet:"):
             torp = _TorrentDownloader(torrent, self.__downdir)
-            await torp.start_download()
         elif torfile := await self.get_torfile(torrent):
             torp = _TorrentDownloader(torfile, self.__downdir)
-            await torp.start_download()
-            await aioremove(torfile)
+            torfile_to_remove = torfile
         else:
             return []
+
+        _apply_fast_settings(torp)
+
+        progress_task = None
+        if stat_msg and name:
+            progress_task = create_task(
+                _progress_monitor(torp, stat_msg, name, self.__downdir, interval=30)
+            )
+
+        try:
+            await torp.start_download()
+        finally:
+            if progress_task and not progress_task.done():
+                progress_task.cancel()
+                try:
+                    await progress_task
+                except (CancelledError, Exception):
+                    pass
+            if torfile_to_remove:
+                try:
+                    await aioremove(torfile_to_remove)
+                except Exception:
+                    pass
 
         after       = set(listdir(self.__downdir))
         new_entries = after - before
