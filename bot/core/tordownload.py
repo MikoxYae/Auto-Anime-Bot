@@ -274,8 +274,6 @@ async def check_torrent_active(magnet_or_url: str, min_seeders: int = 1, timeout
         True if active, False if no seeders found on any tracker
     """
     if not magnet_or_url.startswith("magnet:"):
-        # .torrent URL — we can't easily scrape without downloading
-        # Return True and let the download itself reveal if it's dead
         LOGS.info("Non-magnet torrent URL — skipping activity check, attempting download")
         return True
 
@@ -390,7 +388,7 @@ async def _progress_monitor(
                 s           = handle.status()
                 downloaded  = int(s.total_wanted_done)
                 total       = int(s.total_wanted)
-                dl_rate     = int(s.download_rate)      # bytes/s
+                dl_rate     = int(s.download_rate)
 
                 speed_str   = f"{convertBytes(dl_rate)}/s" if dl_rate > 0 else "—"
                 eta_secs    = ((total - downloaded) / dl_rate) if dl_rate > 0 else 0
@@ -457,7 +455,6 @@ class TorDownloader:
 
         _apply_fast_settings(torp)
 
-        # Start progress monitor as background task if we have a message to update
         progress_task = None
         if stat_msg and name:
             progress_task = create_task(
@@ -481,6 +478,22 @@ class TorDownloader:
 
         after       = set(listdir(self.__downdir))
         new_entries = after - before
+
+        # If the folder pre-existed (leftover from a prior attempt), new_entries will
+        # be empty even though the download succeeded. Ask the libtorrent handle for
+        # the actual on-disk name and check if it's already there.
+        if not new_entries:
+            handle = getattr(torp, 'handle', None) or getattr(torp, '_handle', None)
+            if handle:
+                try:
+                    actual_name = handle.name()
+                    if actual_name and actual_name in after:
+                        LOGS.info(
+                            f"Pre-existing folder detected as completed download: {actual_name}"
+                        )
+                        new_entries = {actual_name}
+                except Exception:
+                    pass
 
         if new_entries:
             entry_name = new_entries.pop()
@@ -545,6 +558,20 @@ class TorDownloader:
 
         after       = set(listdir(self.__downdir))
         new_entries = after - before
+
+        # Same pre-existing folder recovery as in download()
+        if not new_entries:
+            handle = getattr(torp, 'handle', None) or getattr(torp, '_handle', None)
+            if handle:
+                try:
+                    actual_name = handle.name()
+                    if actual_name and actual_name in after:
+                        LOGS.info(
+                            f"Batch: pre-existing folder detected as completed download: {actual_name}"
+                        )
+                        new_entries = {actual_name}
+                except Exception:
+                    pass
 
         if not new_entries:
             LOGS.warning("Batch download: could not detect any new files")
