@@ -13,7 +13,7 @@ from bot.core.database import db
 from bot.core.func_utils import editMessage, sendMessage, encode, decode
 from bot.core.text_utils import TextEditor
 from bot.core.tordownload import TorDownloader
-from bot.core.auto_animes import get_animes
+from bot.core.auto_animes import get_animes, get_batch_animes, is_batch_torrent
 from bot.core.reporter import rep
 from bot.modules.up_posts import send_schedule_post
 from bot.modules.fsub import check_fsub
@@ -192,12 +192,16 @@ async def help_cmd(client, message):
         "/delpic <code>&lt;anilist id&gt;</code> - Remove custom pic\n"
         "/listpics - List all anime with custom pics\n\n"
         "<b>Database:</b>\n"
-        "/delanime <code>&lt;anilist id&gt;</code> - Delete anime data from DB\n"
+        "/delanime <code>&lt;anilist id&gt;</code> - Delete anime data from DB (also clears batch files)\n"
         "/users - Total bot users\n\n"
         "<b>RSS Feeds:</b>\n"
         "/addrss <code>&lt;url&gt;</code> - Add a custom RSS feed URL\n"
         "/delrss <code>&lt;url&gt;</code> - Remove a saved RSS feed URL\n"
         "/listrss - List all saved RSS feeds\n\n"
+        "<b>Batch Mode:</b>\n"
+        "Toggle via /settings → Batch Mode\n"
+        "When ON, season packs are detected automatically and processed quality-by-quality.\n"
+        "Users receive all episodes via inline button click.\n\n"
         "<b>Force Sub:</b>\n"
         "/addchnl <code>&lt;id&gt;</code> - Add a force-sub channel\n"
         "/delchnl <code>&lt;id&gt;</code> - Remove a force-sub channel\n"
@@ -221,11 +225,14 @@ async def status_cmd(client, message):
     completed    = len(ani_cache['completed'])
     connections  = await db.getAllConnections()
     user_count   = await db.getUserCount()
+    batch_mode   = await db.getBatchMode()
+    batch_status = "Enabled" if batch_mode else "Disabled"
 
     await sendMessage(
         message,
         f"<b>Bot Status:</b>\n\n"
         f"• <b>Auto Fetch:</b> {fetch_status}\n"
+        f"• <b>Batch Mode:</b> {batch_status}\n"
         f"• <b>Ongoing Animes:</b> {ongoing}\n"
         f"• <b>Completed Animes:</b> {completed}\n"
         f"• <b>Channel Connections:</b> {len(connections)}\n"
@@ -476,8 +483,14 @@ async def addmagnet_cmd(client, message):
 
     stat     = await sendMessage(message, "<i>Processing magnet link...</i>")
     ani_name = unquote(magnet.split("dn=")[-1].split("&")[0])
-    bot.loop.create_task(get_animes(ani_name, magnet, force=True))
-    await editMessage(stat, "<i>Magnet added to queue!</i>")
+
+    # Route batch torrents to batch processor, single episodes to normal flow
+    if is_batch_torrent(ani_name):
+        bot.loop.create_task(get_batch_animes(ani_name, magnet, force=True))
+        await editMessage(stat, "<i>Batch magnet detected — added to batch queue!</i>")
+    else:
+        bot.loop.create_task(get_animes(ani_name, magnet, force=True))
+        await editMessage(stat, "<i>Magnet added to queue!</i>")
 
 
 # ─── /addtorrent ──────────────────────────────────────────────────────────────
@@ -501,8 +514,14 @@ async def handle_torrent_doc(client, message):
     stat = await sendMessage(message, "<i>Processing torrent file...</i>")
     path = await message.download(f"torrents/{message.document.file_name}")
     name = await TorDownloader.get_name_from_torfile(path) or message.document.file_name
-    bot.loop.create_task(get_animes(name, path, force=True))
-    await editMessage(stat, "<i>Torrent added to queue!</i>")
+
+    # Route batch torrents to batch processor, single episodes to normal flow
+    if is_batch_torrent(name):
+        bot.loop.create_task(get_batch_animes(name, path, force=True))
+        await editMessage(stat, "<i>Batch torrent detected — added to batch queue!</i>")
+    else:
+        bot.loop.create_task(get_animes(name, path, force=True))
+        await editMessage(stat, "<i>Torrent added to queue!</i>")
 
 
 # ─── /addpic ──────────────────────────────────────────────────────────────────
@@ -790,10 +809,15 @@ async def delanime_cmd(client, message):
         return await sendMessage(message, "Invalid AniList ID. Must be a number.")
 
     await db.delAnime(ani_id)
+    batch_deleted = await db.delBatchFiles(ani_id)
     ani_cache['completed'].discard(ani_id)
     ani_cache['ongoing'].discard(ani_id)
 
-    await sendMessage(message, f"Anime <code>{ani_id}</code> deleted from database.")
+    extra = f"\n• <b>Batch files cleared:</b> {batch_deleted} quality pack(s)" if batch_deleted else ""
+    await sendMessage(
+        message,
+        f"<b>Anime <code>{ani_id}</code> deleted from database.</b>{extra}"
+    )
 
 
 # ─── /users ───────────────────────────────────────────────────────────────────
