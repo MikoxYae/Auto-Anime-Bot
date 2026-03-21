@@ -474,7 +474,10 @@ async def handle_text_input(client, message):
                 uid,
                 "❌ <b>Invalid value.</b> Must be a whole number in seconds."
             )
-            await _edit_back_delif seconds < 30:
+            await _edit_back_deltime()
+            return
+
+        if seconds < 30:
             await client.send_message(
                 uid,
                 "❌ <b>Too short.</b> Minimum is <b>30 seconds</b>."
