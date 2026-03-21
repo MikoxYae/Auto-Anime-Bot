@@ -59,6 +59,8 @@ async def ai_short_title(title: str, max_len: int = 20) -> str:
     return fallback
 
 
+# ─── Normal episode caption ───────────────────────────────────────────────────
+
 CAPTION_FORMAT = """
 <b>㊂ <i>{title}</i></b>
 <b>╭┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅</b>
@@ -74,7 +76,52 @@ CAPTION_FORMAT = """
 ╰┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅
 """
 
-GENRES_EMOJI = {"Action": "👊", "Adventure": choice(['🪂', '🧗‍♀']), "Comedy": "🤣", "Drama": " 🎭", "Ecchi": choice(['💋', '🥵']), "Fantasy": choice(['🧞', '🧞‍♂', '🧞‍♀','🌗']), "Hentai": "🔞", "Horror": "☠", "Mahou Shoujo": "☯", "Mecha": "🤖", "Music": "🎸", "Mystery": "🔮", "Psychological": "♟", "Romance": "💞", "Sci-Fi": "🛸", "Slice of Life": choice(['☘','🍁']), "Sports": "⚽️", "Supernatural": "🫧", "Thriller": choice(['🥶', '🔪','🤯'])}
+# ─── Batch delivery caption (sent to user DM on button click) ─────────────────
+
+BATCH_DELIVERY_CAPTION = """
+➤ <b>{title}</b>
+➤ <b>Episodes -</b> <code>{total_eps}</code>
+➤ [<b>Audio -</b> 🎌 {audio}][<b>Quality -</b> {qual}p]
+"""
+
+# ─── Batch channel post caption (sent to channel when batch is ready) ─────────
+
+BATCH_POST_CAPTION = """
+<b>㊂ <i>{title}</i></b>
+<b>╭┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅</b>
+<b>⊙</b> <i>Genres:</i> <i>{genres}</i>
+<b>⊙</b> <i>Status:</i> <i>{status}</i>
+<b>⊙</b> <i>Source:</i> <i>BluRay</i>
+<b>⊙</b> <i>Episodes:</i> <i>{total_eps}</i>
+<b>⊙</b> <i>Audio: {audio}</i>
+<b>⊙</b> <i>Subtitle: English</i>
+<b>╰┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅</b>
+╭┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅
+⌬  <b><i>Powered By</i></b> ~ <b><i>{cred}</i></b>
+╰┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅┅
+"""
+
+GENRES_EMOJI = {
+    "Action": "👊",
+    "Adventure": choice(['🪂', '🧗‍♀']),
+    "Comedy": "🤣",
+    "Drama": "🎭",
+    "Ecchi": choice(['💋', '🥵']),
+    "Fantasy": choice(['🧞', '🧞‍♂', '🧞‍♀', '🌗']),
+    "Hentai": "🔞",
+    "Horror": "☠",
+    "Mahou Shoujo": "☯",
+    "Mecha": "🤖",
+    "Music": "🎸",
+    "Mystery": "🔮",
+    "Psychological": "♟",
+    "Romance": "💞",
+    "Sci-Fi": "🛸",
+    "Slice of Life": choice(['☘', '🍁']),
+    "Sports": "⚽️",
+    "Supernatural": "🫧",
+    "Thriller": choice(['🥶', '🔪', '🤯']),
+}
 
 ANIME_GRAPHQL_QUERY = """
 query ($id: Int, $search: String, $seasonYear: Int) {
@@ -156,36 +203,44 @@ query ($id: Int, $search: String, $seasonYear: Int) {
 }
 """
 
+
 class AniLister:
     def __init__(self, anime_name: str, year: int) -> None:
-        self.__api = "https://graphql.anilist.co"
-        self.__ani_name = anime_name
-        self.__ani_year = year
-        self.__vars = {'search' : self.__ani_name, 'seasonYear': self.__ani_year}
-    
+        self.__api       = "https://graphql.anilist.co"
+        self.__ani_name  = anime_name
+        self.__ani_year  = year
+        self.__vars      = {'search': self.__ani_name, 'seasonYear': self.__ani_year}
+
     def __update_vars(self, year=True) -> None:
         if year:
             self.__ani_year -= 1
             self.__vars['seasonYear'] = self.__ani_year
         else:
-            self.__vars = {'search' : self.__ani_name}
-    
+            self.__vars = {'search': self.__ani_name}
+
     async def post_data(self):
         async with ClientSession() as sess:
-            async with sess.post(self.__api, json={'query': ANIME_GRAPHQL_QUERY, 'variables': self.__vars}) as resp:
+            async with sess.post(
+                self.__api,
+                json={'query': ANIME_GRAPHQL_QUERY, 'variables': self.__vars}
+            ) as resp:
                 return (resp.status, await resp.json(), resp.headers)
-        
+
     async def get_anidata(self):
         res_code, resp_json, res_heads = await self.post_data()
+
         while res_code == 404 and self.__ani_year > 2020:
             self.__update_vars()
-            await rep.report(f"AniList Query Name: {self.__ani_name}, Retrying with {self.__ani_year}", "warning", log=False)
+            await rep.report(
+                f"AniList Query Name: {self.__ani_name}, Retrying with {self.__ani_year}",
+                "warning", log=False
+            )
             res_code, resp_json, res_heads = await self.post_data()
-        
+
         if res_code == 404:
             self.__update_vars(year=False)
             res_code, resp_json, res_heads = await self.post_data()
-        
+
         if res_code == 200:
             return resp_json.get('data', {}).get('Media', {}) or {}
         elif res_code == 429:
@@ -200,12 +255,13 @@ class AniLister:
         else:
             await rep.report(f"AniList API Error: {res_code}", "error", log=False)
             return {}
-    
+
+
 class TextEditor:
     def __init__(self, name):
         self.__name = name
-        self.adata = {}
-        self.pdata = parse(name)
+        self.adata  = {}
+        self.pdata  = parse(name)
 
     async def load_anilist(self):
         cache_names = []
@@ -222,12 +278,12 @@ class TextEditor:
     async def get_id(self):
         if (ani_id := self.adata.get('id')) and str(ani_id).isdigit():
             return ani_id
-            
+
     @handle_logs
     async def parse_name(self, no_s=False, no_y=False):
-        anime_name = self.pdata.get("anime_title")
+        anime_name   = self.pdata.get("anime_title")
         anime_season = self.pdata.get("anime_season")
-        anime_year = self.pdata.get("anime_year")
+        anime_year   = self.pdata.get("anime_year")
         if anime_name:
             pname = anime_name
             if not no_s and self.pdata.get("episode_number") and anime_season:
@@ -236,43 +292,125 @@ class TextEditor:
                 pname += f" {anime_year}"
             return pname
         return anime_name
-        
+
     @handle_logs
     async def get_poster(self):
         if anime_id := await self.get_id():
             return f"https://img.anili.st/media/{anime_id}"
         return "https://telegra.ph/file/112ec08e59e73b6189a20.jpg"
-        
+
     @handle_logs
     async def get_upname(self, qual=""):
-        anime_name = self.pdata.get("anime_title")
-        codec = 'HEVC' if 'libx265' in ffargs[qual] else 'AV1' if 'libaom-av1' in ffargs[qual] else ''
-        lang = 'Multi-Audio' if 'multi-audio' in self.__name.lower() else 'Sub'
-        anime_season = str(ani_s[-1]) if (ani_s := self.pdata.get('anime_season', '01')) and isinstance(ani_s, list) else str(ani_s)
+        anime_name   = self.pdata.get("anime_title")
+        codec        = 'HEVC' if 'libx265' in ffargs[qual] else 'AV1' if 'libaom-av1' in ffargs[qual] else ''
+        lang         = 'Multi-Audio' if 'multi-audio' in self.__name.lower() else 'Sub'
+        anime_season = (
+            str(ani_s[-1]) if (ani_s := self.pdata.get('anime_season', '01'))
+            and isinstance(ani_s, list) else str(ani_s)
+        )
         if anime_name and self.pdata.get("episode_number"):
-            titles = self.adata.get('title', {})
+            titles    = self.adata.get('title', {})
             raw_title = titles.get('english') or titles.get('romaji') or titles.get('native') or anime_name
             short_title = await ai_short_title(raw_title)
-            return f"""[S{anime_season}-{'E'+str(self.pdata.get('episode_number')) if self.pdata.get('episode_number') else ''}] {short_title} {'['+qual+'p]' if qual else ''} {'['+codec.upper()+'] ' if codec else ''}{'['+lang+']'} {Var.BRAND_UNAME}.mkv"""
+            return (
+                f"[S{anime_season}-"
+                f"{'E'+str(self.pdata.get('episode_number')) if self.pdata.get('episode_number') else ''}] "
+                f"{short_title} "
+                f"{'['+qual+'p]' if qual else ''} "
+                f"{'['+codec.upper()+'] ' if codec else ''}"
+                f"{'['+lang+']'} "
+                f"{Var.BRAND_UNAME}.mkv"
+            )
+
+    @handle_logs
+    async def get_batch_upname(self, qual: str, ep_no: str, original_name: str = "") -> str:
+        """
+        Generate upload filename for a single episode inside a batch.
+        ep_no: episode number string e.g. '01', '02'
+        original_name: original filename of this episode (for codec/lang detection)
+        """
+        src          = original_name or self.__name
+        codec        = 'HEVC' if 'libx265' in ffargs.get(qual, '') else 'AV1' if 'libaom-av1' in ffargs.get(qual, '') else ''
+        lang         = 'Dual-Audio' if any(k in src.lower() for k in ['dual', 'multi-audio', 'dual-audio']) else 'Sub'
+        anime_season = (
+            str(ani_s[-1]) if (ani_s := self.pdata.get('anime_season', '01'))
+            and isinstance(ani_s, list) else str(ani_s)
+        )
+        titles    = self.adata.get('title', {})
+        raw_title = titles.get('english') or titles.get('romaji') or titles.get('native') or (self.pdata.get('anime_title') or 'Anime')
+        short_title = await ai_short_title(raw_title)
+        return (
+            f"[S{anime_season}-E{ep_no}] "
+            f"{short_title} "
+            f"[{qual}p] "
+            f"{'['+codec.upper()+'] ' if codec else ''}"
+            f"[{lang}] "
+            f"{Var.BRAND_UNAME}.mkv"
+        )
 
     @handle_logs
     async def get_caption(self):
-        sd = self.adata.get('startDate', {})
+        sd        = self.adata.get('startDate', {})
         startdate = f"{month_name[sd['month']]} {sd['day']}, {sd['year']}" if sd.get('day') and sd.get('year') else ""
-        ed = self.adata.get('endDate', {})
-        enddate = f"{month_name[ed['month']]} {ed['day']}, {ed['year']}" if ed.get('day') and ed.get('year') else ""
-        titles = self.adata.get("title", {})
-        
+        ed        = self.adata.get('endDate', {})
+        enddate   = f"{month_name[ed['month']]} {ed['day']}, {ed['year']}" if ed.get('day') and ed.get('year') else ""
+        titles    = self.adata.get("title", {})
+
         return CAPTION_FORMAT.format(
-                title=titles.get('english') or titles.get('romaji') or titles.get('native'),
-                form=self.adata.get("format") or "N/A",
-                genres=", ".join(f"{GENRES_EMOJI[x]} #{x.replace(' ', '_').replace('-', '_')}" for x in (self.adata.get('genres') or [])),
-                avg_score=f"{sc}%" if (sc := self.adata.get('averageScore')) else "N/A",
-                status=self.adata.get("status") or "N/A",
-                start_date=startdate or "N/A",
-                end_date=enddate or "N/A",
-                t_eps=self.adata.get("episodes") or "N/A",
-                plot= (desc if (desc := self.adata.get("description") or "N/A") and len(desc) < 200 else desc[:200] + "..."),
-                ep_no=self.pdata.get("episode_number"),
-                cred=Var.BRAND_UNAME,
-            )
+            title      = titles.get('english') or titles.get('romaji') or titles.get('native'),
+            form       = self.adata.get("format") or "N/A",
+            genres     = ", ".join(
+                f"{GENRES_EMOJI.get(x, '')} #{x.replace(' ', '_').replace('-', '_')}"
+                for x in (self.adata.get('genres') or [])
+            ),
+            avg_score  = f"{sc}%" if (sc := self.adata.get('averageScore')) else "N/A",
+            status     = self.adata.get("status") or "N/A",
+            start_date = startdate or "N/A",
+            end_date   = enddate or "N/A",
+            t_eps      = self.adata.get("episodes") or "N/A",
+            plot       = (
+                desc if (desc := self.adata.get("description") or "N/A") and len(desc) < 200
+                else desc[:200] + "..."
+            ),
+            ep_no      = self.pdata.get("episode_number"),
+            cred       = Var.BRAND_UNAME,
+        )
+
+    @handle_logs
+    async def get_batch_post_caption(self, total_eps: int, original_name: str = "") -> str:
+        """
+        Caption for the channel post when a full batch is ready.
+        total_eps: total number of episodes in the batch
+        original_name: original torrent/file name (for audio type detection)
+        """
+        src    = original_name or self.__name
+        audio  = "Dual Audio" if any(k in src.lower() for k in ['dual', 'multi-audio', 'dual-audio']) else "Japanese"
+        titles = self.adata.get("title", {})
+        title  = titles.get('english') or titles.get('romaji') or titles.get('native') or self.pdata.get('anime_title') or "Unknown"
+
+        return BATCH_POST_CAPTION.format(
+            title     = title,
+            genres    = ", ".join(
+                f"{GENRES_EMOJI.get(x, '')} #{x.replace(' ', '_').replace('-', '_')}"
+                for x in (self.adata.get('genres') or [])
+            ),
+            status    = self.adata.get("status") or "N/A",
+            total_eps = total_eps,
+            audio     = audio,
+            cred      = Var.BRAND_UNAME,
+        )
+
+    @staticmethod
+    def get_batch_delivery_caption(title: str, total_eps: int, qual: str, original_name: str = "") -> str:
+        """
+        Caption sent to user DM when they click a batch quality button.
+        Static method — no AniList data needed, called from batch_handler.
+        """
+        src   = original_name or ""
+        audio = "Dual Audio" if any(k in src.lower() for k in ['dual', 'multi-audio', 'dual-audio']) else "Japanese"
+        return BATCH_DELIVERY_CAPTION.format(
+            title     = title,
+            total_eps = total_eps,
+            audio     = audio,
+            qual      = qual,
+        )
