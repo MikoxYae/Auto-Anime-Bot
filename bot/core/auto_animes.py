@@ -22,8 +22,29 @@ btn_formatter = {
     '360':  '𝟯𝟲𝟬𝗽'
 }
 
-STICKER_MAIN    = "CAACAgUAAxkBAAEQyYJpvRP7-N28QbduJUo9erWgDXv2pwACiBAAAuWgKFeB8NkyyNkOAAE6BA"
-STICKER_CONNECT = "CAACAgUAAxkBAAEQyYRpvRP_pjHK_GP8eE4VjFPWw9wr7AADFQAClP0pVztrIQO4kT1IOgQ"
+# ─── Default sticker file_ids (used when no custom sticker is set in DB) ──────
+_DEFAULT_STICKER_MAIN    = "CAACAgUAAxkBAAEQyYJpvRP7-N28QbduJUo9erWgDXv2pwACiBAAAuWgKFeB8NkyyNkOAAE6BA"
+_DEFAULT_STICKER_CONNECT = "CAACAgUAAxkBAAEQyYRpvRP_pjHK_GP8eE4VjFPWw9wr7AADFQAClP0pVztrIQO4kT1IOgQ"
+
+
+async def _get_stickers() -> tuple[str | None, str | None]:
+    """
+    Returns (sticker_main, sticker_connect).
+    Each value is either a custom file_id from DB, the default file_id,
+    or None if the admin explicitly removed that sticker.
+
+    DB stores:
+      - A file_id string  → use that sticker
+      - The special value 'REMOVED' → send no sticker
+      - Missing document  → fall back to the hardcoded default
+    """
+    raw_main    = await db.getStickerMain()
+    raw_connect = await db.getStickerConnect()
+
+    sticker_main    = None if raw_main    == 'REMOVED' else (raw_main    or _DEFAULT_STICKER_MAIN)
+    sticker_connect = None if raw_connect == 'REMOVED' else (raw_connect or _DEFAULT_STICKER_CONNECT)
+
+    return sticker_main, sticker_connect
 
 
 async def fetch_animes():
@@ -112,6 +133,9 @@ async def get_animes(name, torrent, force=False):
             custom_pic = await db.getAnimePic(ani_id) if ani_id else None
             poster     = custom_pic or await aniInfo.get_poster()
 
+            # Fetch current sticker settings from DB once
+            sticker_main, sticker_connect = await _get_stickers()
+
             post_msg = await bot.send_photo(
                 upload_channel,
                 photo=poster,
@@ -121,11 +145,13 @@ async def get_animes(name, torrent, force=False):
             # ── Sticker after upload_channel post ─────────────────────────────
             try:
                 if conn:
-                    # Connected channel → Sticker 2
-                    await bot.send_sticker(upload_channel, STICKER_CONNECT)
+                    # Connected channel post → send connected sticker (if set)
+                    if sticker_connect:
+                        await bot.send_sticker(upload_channel, sticker_connect)
                 else:
-                    # No connection → main channel → Sticker 1
-                    await bot.send_sticker(Var.MAIN_CHANNEL, STICKER_MAIN)
+                    # No connection → post went to main channel → send main sticker (if set)
+                    if sticker_main:
+                        await bot.send_sticker(Var.MAIN_CHANNEL, sticker_main)
             except Exception:
                 pass
             # ─────────────────────────────────────────────────────────────────
@@ -140,9 +166,10 @@ async def get_animes(name, torrent, force=False):
                     ]])
                 )
 
-                # ── Sticker 1 on main channel after invite link post ──────────
+                # ── Main channel sticker after invite link post ───────────────
                 try:
-                    await bot.send_sticker(Var.MAIN_CHANNEL, STICKER_MAIN)
+                    if sticker_main:
+                        await bot.send_sticker(Var.MAIN_CHANNEL, sticker_main)
                 except Exception:
                     pass
                 # ─────────────────────────────────────────────────────────────
