@@ -21,10 +21,6 @@ private = filters.private
 
 pending_add_subadmin = {}
 pending_set_timer    = {}
-pending_set_sticker  = {}
-
-DEFAULT_STICKER_MAIN      = 'CAACAgUAAxkBAAEQyYJpvRP7-N28QbduJUo9erWgDXv2pwACiBAAAuWgKFeB8NkyyNkOAAE6BA'
-DEFAULT_STICKER_CONNECTED = 'CAACAgUAAxkBAAEQyYRpvRP_pjHK_GP8eE4VjFPWw9wr7AADFQAClP0pVztrIQO4kT1IOgQ'
 
 
 # ─── Auth Helper ─────────────────────────────────────────────────────────────
@@ -82,9 +78,6 @@ async def _settings_markup() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(bm_label, callback_data="stg_toggle_batchmode"),
         ],
-        [
-            InlineKeyboardButton("🎭 Stickers", callback_data="stg_stickers"),
-        ],
     ])
 
 
@@ -127,36 +120,6 @@ async def _deltime_text_markup():
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("✏️ Set Timer", callback_data="stg_set_timer")],
         [InlineKeyboardButton("◀️ Back",      callback_data="stg_back")],
-    ])
-
-    return text, markup
-
-
-async def _sticker_text_markup():
-    main_sticker      = await db.getSticker('main')
-    connected_sticker = await db.getSticker('connected')
-
-    main_display = f"<code>{main_sticker}</code>" if main_sticker else "<i>Default</i>"
-    conn_display = f"<code>{connected_sticker}</code>" if connected_sticker else "<i>Default</i>"
-
-    text = (
-        "🎭 <b>Sticker Settings</b>\n\n"
-        f"• <b>Main Channel Sticker:</b>\n  {main_display}\n\n"
-        f"• <b>Connected Channel Sticker:</b>\n  {conn_display}\n\n"
-        "<i>These stickers are sent after every task upload completes.\n"
-        "Tap a button to change a sticker — then send any sticker to the bot.</i>"
-    )
-
-    markup = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✏️ Set Main Sticker",      callback_data="stg_set_sticker_main"),
-            InlineKeyboardButton("🗑 Remove",                 callback_data="stg_del_sticker_main"),
-        ],
-        [
-            InlineKeyboardButton("✏️ Set Connected Sticker", callback_data="stg_set_sticker_connected"),
-            InlineKeyboardButton("🗑 Remove",                 callback_data="stg_del_sticker_connected"),
-        ],
-        [InlineKeyboardButton("◀️ Back", callback_data="stg_back")],
     ])
 
     return text, markup
@@ -224,72 +187,6 @@ async def stg_toggle_batchmode_cb(client, cq):
 
     text   = await _settings_text()
     markup = await _settings_markup()
-    await cq.edit_message_text(text, reply_markup=markup)
-
-
-# ─── Callback: Stickers panel ────────────────────────────────────────────────
-
-@bot.on_callback_query(filters.regex(r"^stg_stickers$"))
-async def stg_stickers_cb(client, cq):
-    if not await _is_authorized(cq.from_user.id):
-        return await cq.answer("You are not authorized.", show_alert=True)
-
-    text, markup = await _sticker_text_markup()
-    await cq.edit_message_text(text, reply_markup=markup)
-    await cq.answer()
-
-
-# ─── Callback: Set sticker trigger ───────────────────────────────────────────
-
-@bot.on_callback_query(filters.regex(r"^stg_set_sticker_(main|connected)$"))
-async def stg_set_sticker_cb(client, cq):
-    if not await _is_authorized(cq.from_user.id):
-        return await cq.answer("You are not authorized.", show_alert=True)
-
-    sticker_type = cq.matches[0].group(1)
-    label        = "Main Channel" if sticker_type == "main" else "Connected Channel"
-
-    pending_set_sticker[cq.from_user.id] = {
-        'type':    sticker_type,
-        'chat_id': cq.message.chat.id,
-        'msg_id':  cq.message.id
-    }
-
-    await cq.edit_message_text(
-        f"🎭 <b>Set {label} Sticker</b>\n\n"
-        f"Send the <b>sticker</b> you want to use for <b>{label}</b>.\n\n"
-        f"<i>The sticker will be sent to the channel after every task upload completes.</i>",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Cancel", callback_data="stg_set_sticker_cancel")]
-        ])
-    )
-    await cq.answer()
-
-
-# ─── Callback: Cancel set sticker ────────────────────────────────────────────
-
-@bot.on_callback_query(filters.regex(r"^stg_set_sticker_cancel$"))
-async def stg_set_sticker_cancel_cb(client, cq):
-    pending_set_sticker.pop(cq.from_user.id, None)
-    text, markup = await _sticker_text_markup()
-    await cq.edit_message_text(text, reply_markup=markup)
-    await cq.answer("Cancelled.")
-
-
-# ─── Callback: Remove sticker ─────────────────────────────────────────────────
-
-@bot.on_callback_query(filters.regex(r"^stg_del_sticker_(main|connected)$"))
-async def stg_del_sticker_cb(client, cq):
-    if not await _is_authorized(cq.from_user.id):
-        return await cq.answer("You are not authorized.", show_alert=True)
-
-    sticker_type = cq.matches[0].group(1)
-    label        = "Main Channel" if sticker_type == "main" else "Connected Channel"
-
-    await db.deleteSticker(sticker_type)
-    await cq.answer(f"✅ {label} sticker removed!", show_alert=True)
-
-    text, markup = await _sticker_text_markup()
     await cq.edit_message_text(text, reply_markup=markup)
 
 
@@ -494,42 +391,3 @@ async def handle_text_input(client, message):
 
         await _edit_back_deltime()
         return
-
-
-# ─── Message handler: sticker input ──────────────────────────────────────────
-
-@bot.on_message(filters.sticker & private, group=1)
-async def handle_sticker_input(client, message):
-    uid = message.from_user.id
-    if uid not in pending_set_sticker:
-        return
-
-    if not await _is_authorized(uid):
-        pending_set_sticker.pop(uid, None)
-        return
-
-    info         = pending_set_sticker.pop(uid)
-    sticker_type = info['type']
-    file_id      = message.sticker.file_id
-    label        = "Main Channel" if sticker_type == "main" else "Connected Channel"
-
-    await db.setSticker(sticker_type, file_id)
-
-    try:
-        await message.delete()
-    except Exception:
-        pass
-
-    await client.send_message(
-        uid,
-        f"✅ <b>{label} sticker updated!</b>\n\n"
-        f"<code>{file_id}</code>"
-    )
-
-    text, markup = await _sticker_text_markup()
-    try:
-        await client.edit_message_text(
-            info['chat_id'], info['msg_id'], text, reply_markup=markup
-        )
-    except Exception:
-        pass
