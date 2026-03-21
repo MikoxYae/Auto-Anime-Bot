@@ -194,7 +194,7 @@ async def get_animes(name, torrent, force=False):
                 f"‣ <b>Anime Name :</b> <b><i>{name}</i></b>\n\n<i>Downloading...</i>"
             )
 
-            dl = await TorDownloader("./downloads").download(torrent, name)
+            dl = await TorDownloader("./downloads").download(torrent, name, stat_msg=stat_msg)
             if not dl or not ospath.exists(dl):
                 await rep.report("File Download Incomplete, Try Again", "error")
                 await stat_msg.delete()
@@ -442,7 +442,7 @@ async def get_batch_animes(name: str, torrent: str, force: bool = False):
         )
 
         # 5. Download all episodes
-        video_files = await TorDownloader("./downloads").download_batch(torrent, name)
+        video_files = await TorDownloader("./downloads").download_batch(torrent, name, stat_msg=stat_msg)
 
         if not video_files:
             await rep.report(
