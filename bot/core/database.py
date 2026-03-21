@@ -301,6 +301,9 @@ class MongoDB:
         doc = await self.__botsettings.find_one({'_id': f'sticker_{sticker_type}'})
         return doc['value'] if doc else None
 
+    async def deleteSticker(self, sticker_type: str) -> None:
+        await self.__botsettings.delete_one({'_id': f'sticker_{sticker_type}'})
+
 
 _mongo_uri = os.environ.get("MONGO_URI", "")
 db = MongoDB(_mongo_uri, "FZAutoAnimes")
