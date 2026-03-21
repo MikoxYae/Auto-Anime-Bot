@@ -22,6 +22,9 @@ btn_formatter = {
     '360':  '𝟯𝟲𝟬𝗽'
 }
 
+STICKER_MAIN    = "CAACAgUAAxkBAAEQyYJpvRP7-N28QbduJUo9erWgDXv2pwACiBAAAuWgKFeB8NkyyNkOAAE6BA"
+STICKER_CONNECT = "CAACAgUAAxkBAAEQyYRpvRP_pjHK_GP8eE4VjFPWw9wr7AADFQAClP0pVztrIQO4kT1IOgQ"
+
 
 async def fetch_animes():
     await rep.report("Fetch Animes Started !!", "info")
@@ -115,6 +118,18 @@ async def get_animes(name, torrent, force=False):
                 caption=await aniInfo.get_caption()
             )
 
+            # ── Sticker after upload_channel post ─────────────────────────────
+            try:
+                if conn:
+                    # Connected channel → Sticker 2
+                    await bot.send_sticker(upload_channel, STICKER_CONNECT)
+                else:
+                    # No connection → main channel → Sticker 1
+                    await bot.send_sticker(Var.MAIN_CHANNEL, STICKER_MAIN)
+            except Exception:
+                pass
+            # ─────────────────────────────────────────────────────────────────
+
             if conn and invite_link:
                 await bot.send_photo(
                     Var.MAIN_CHANNEL,
@@ -124,6 +139,13 @@ async def get_animes(name, torrent, force=False):
                         InlineKeyboardButton("🔗 Join Now", url=invite_link)
                     ]])
                 )
+
+                # ── Sticker 1 on main channel after invite link post ──────────
+                try:
+                    await bot.send_sticker(Var.MAIN_CHANNEL, STICKER_MAIN)
+                except Exception:
+                    pass
+                # ─────────────────────────────────────────────────────────────
 
             await asleep(1.5)
 
