@@ -24,11 +24,9 @@ btn_formatter = {
     '360':  '𝟯𝟲𝟬𝗽',
 }
 
-# ─── Default sticker file_ids ─────────────────────────────────────────────────
 _DEFAULT_STICKER_MAIN    = "CAACAgUAAxkBAAEQyYJpvRP7-N28QbduJUo9erWgDXv2pwACiBAAAuWgKFeB8NkyyNkOAAE6BA"
 _DEFAULT_STICKER_CONNECT = "CAACAgUAAxkBAAEQyYRpvRP_pjHK_GP8eE4VjFPWw9wr7AADFQAClP0pVztrIQO4kT1IOgQ"
 
-# ─── Batch keywords for detection ────────────────────────────────────────────
 _BATCH_KEYWORDS = [
     '[batch]', 'complete series', 'complete collection',
     'complete season', 'the complete', 'bd complete',
@@ -38,32 +36,20 @@ _BATCH_KEYWORDS = [
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def is_batch_torrent(name: str) -> bool:
-    """
-    Detect if a torrent name is a season/batch pack rather than a single episode.
-
-    Rules (any one match → batch):
-      1. Contains a known batch keyword (case-insensitive)
-      2. Anitopy finds a season but NO episode number
-      3. Anitopy finds an episode range  e.g. '01-12'
-    """
     name_lower = name.lower()
 
-    # Rule 1 — explicit keywords
     for kw in _BATCH_KEYWORDS:
         if kw in name_lower:
             return True
 
-    # Rules 2 & 3 — anitopy analysis
     try:
         pdata  = anitopy_parse(name)
         ep_no  = pdata.get('episode_number')
         season = pdata.get('anime_season')
 
-        # Has season marker but no episode → batch
         if season and not ep_no:
             return True
 
-        # Episode field is a range string like '01-12'
         if ep_no and isinstance(ep_no, str) and '-' in str(ep_no):
             return True
 
@@ -73,12 +59,7 @@ def is_batch_torrent(name: str) -> bool:
     return False
 
 
-async def _get_stickers() -> tuple[str | None, str | None]:
-    """
-    Returns (sticker_main, sticker_connect).
-    DB value 'REMOVED' → None (no sticker sent).
-    Missing DB doc   → hardcoded default.
-    """
+async def _get_stickers() -> tuple:
     raw_main    = await db.getStickerMain()
     raw_connect = await db.getStickerConnect()
 
@@ -88,8 +69,7 @@ async def _get_stickers() -> tuple[str | None, str | None]:
     return sticker_main, sticker_connect
 
 
-async def _find_connection(ani_id, name: str, pdata: dict) -> dict | None:
-    """Find a channel connection for this anime by ID, then by name."""
+async def _find_connection(ani_id, name: str, pdata: dict):
     if ani_id:
         conn = await db.getChannelConnection(ani_id)
         if conn:
@@ -137,7 +117,6 @@ async def fetch_animes():
                 continue
 
             if is_batch_torrent(info.title):
-                # Route to batch processor
                 bot_loop.create_task(get_batch_animes(info.title, info.link))
             else:
                 bot_loop.create_task(get_animes(info.title, info.link))
@@ -173,8 +152,8 @@ async def get_animes(name, torrent, force=False):
 
             await rep.report(f"New Anime Torrent Found!\n\n{name}", "info")
 
-            custom_pic             = await db.getAnimePic(ani_id) if ani_id else None
-            poster                 = custom_pic or await aniInfo.get_poster()
+            custom_pic                    = await db.getAnimePic(ani_id) if ani_id else None
+            poster                        = custom_pic or await aniInfo.get_poster()
             sticker_main, sticker_connect = await _get_stickers()
 
             post_msg = await bot.send_photo(
@@ -183,7 +162,6 @@ async def get_animes(name, torrent, force=False):
                 caption = await aniInfo.get_caption()
             )
 
-            # Sticker after channel post
             try:
                 if conn:
                     if sticker_connect:
@@ -194,7 +172,6 @@ async def get_animes(name, torrent, force=False):
             except Exception:
                 pass
 
-            # Main channel mirror when connected
             if conn and invite_link:
                 await bot.send_photo(
                     Var.MAIN_CHANNEL,
@@ -223,10 +200,10 @@ async def get_animes(name, torrent, force=False):
                 await stat_msg.delete()
                 return
 
-            post_id              = post_msg.id
-            ffEvent              = Event()
-            ff_queued[post_id]   = ffEvent
-            ff_queue_names[post_id] = name
+            post_id                  = post_msg.id
+            ffEvent                  = Event()
+            ff_queued[post_id]       = ffEvent
+            ff_queue_names[post_id]  = name
             ff_queue_order.append(post_id)
 
             if ffLock.locked():
@@ -258,8 +235,8 @@ async def get_animes(name, torrent, force=False):
                     try:
                         out_path = await FFEncoder(
                             stat_msg, dl, filename, qual,
-                            turn_index=turn_index,
-                            total_quals=total_quals
+                            turn_index  = turn_index,
+                            total_quals = total_quals
                         ).start_encode()
                     except Exception as e:
                         await rep.report(f"Encode Error [{qual}p]: {e}", "error")
@@ -370,18 +347,8 @@ async def get_animes(name, torrent, force=False):
 # ─── Batch processor ──────────────────────────────────────────────────────────
 
 async def get_batch_animes(name: str, torrent: str, force: bool = False):
-    """
-    Full batch processing flow:
-      1. Batch mode gate
-      2. Torrent activity check (seeders)
-      3. AniList metadata fetch
-      4. Channel post (connected or main)
-      5. Download all episodes
-      6. For each quality → encode ALL episodes → upload all → save to DB → add button
-      7. Cleanup
-    """
     try:
-        # ── 1. Batch mode gate ────────────────────────────────────────────────
+        # 1. Batch mode gate
         batch_mode = await db.getBatchMode()
         if not batch_mode:
             await rep.report(
@@ -390,7 +357,7 @@ async def get_batch_animes(name: str, torrent: str, force: bool = False):
             )
             return
 
-        # ── 2. Torrent activity check ─────────────────────────────────────────
+        # 2. Torrent activity check
         await rep.report(f"Checking batch torrent activity:\n{name}", "info")
         is_active = await check_torrent_active(torrent)
         if not is_active:
@@ -400,33 +367,37 @@ async def get_batch_animes(name: str, torrent: str, force: bool = False):
             )
             return
 
-        # ── 3. AniList metadata ───────────────────────────────────────────────
+        # 3. AniList metadata
         aniInfo = TextEditor(name)
         await aniInfo.load_anilist()
 
-        ani_id = aniInfo.adata.get('id')
-        titles = aniInfo.adata.get('title') or {}
-        display_name = titles.get('english') or titles.get('romaji') or titles.get('native') or (aniInfo.pdata.get('anime_title') or name)
+        ani_id       = aniInfo.adata.get('id')
+        titles       = aniInfo.adata.get('title') or {}
+        display_name = (
+            titles.get('english')
+            or titles.get('romaji')
+            or titles.get('native')
+            or aniInfo.pdata.get('anime_title')
+            or name
+        )
 
-        # Deduplicate: skip if this batch was already completed
         if not force and ani_id is not None and ani_id in ani_cache['completed']:
             return
 
         if ani_id is not None:
             ani_cache['ongoing'].add(ani_id)
 
-        # ── 4. Channel post ───────────────────────────────────────────────────
+        # 4. Channel post
         conn           = await _find_connection(ani_id, name, aniInfo.pdata)
         upload_channel = int(conn['channel_id']) if conn else Var.MAIN_CHANNEL
         invite_link    = conn.get('invite_link', '') if conn else None
 
-        custom_pic             = await db.getAnimePic(ani_id) if ani_id else None
-        poster                 = custom_pic or await aniInfo.get_poster()
+        custom_pic                    = await db.getAnimePic(ani_id) if ani_id else None
+        poster                        = custom_pic or await aniInfo.get_poster()
         sticker_main, sticker_connect = await _get_stickers()
 
         await rep.report(f"New Batch Torrent Found!\n\n{name}", "info")
 
-        # Placeholder caption — episode count unknown until download completes
         initial_caption = await aniInfo.get_batch_post_caption(
             total_eps     = 0,
             original_name = name,
@@ -438,7 +409,6 @@ async def get_batch_animes(name: str, torrent: str, force: bool = False):
             caption = initial_caption,
         )
 
-        # Sticker after upload channel post
         try:
             if conn:
                 if sticker_connect:
@@ -449,7 +419,6 @@ async def get_batch_animes(name: str, torrent: str, force: bool = False):
         except Exception:
             pass
 
-        # Mirror to main channel with invite button when connected
         if conn and invite_link:
             await bot.send_photo(
                 Var.MAIN_CHANNEL,
@@ -472,7 +441,7 @@ async def get_batch_animes(name: str, torrent: str, force: bool = False):
             f"‣ <b>Batch :</b> <b><i>{name}</i></b>\n\n<i>Downloading all episodes...</i>"
         )
 
-        # ── 5. Download all episodes ──────────────────────────────────────────
+        # 5. Download all episodes
         video_files = await TorDownloader("./downloads").download_batch(torrent, name)
 
         if not video_files:
@@ -488,7 +457,6 @@ async def get_batch_animes(name: str, torrent: str, force: bool = False):
         total_eps = len(video_files)
         await rep.report(f"Batch download complete — {total_eps} episode(s):\n{name}", "info")
 
-        # Update post caption with real episode count
         try:
             updated_caption = await aniInfo.get_batch_post_caption(
                 total_eps     = total_eps,
@@ -498,7 +466,7 @@ async def get_batch_animes(name: str, torrent: str, force: bool = False):
         except Exception:
             updated_caption = initial_caption
 
-        # ── Queue and acquire ffLock (same as normal flow) ────────────────────
+        # Queue and acquire ffLock
         post_id                  = post_msg.id
         ffEvent                  = Event()
         ff_queued[post_id]       = ffEvent
@@ -517,20 +485,18 @@ async def get_batch_animes(name: str, torrent: str, force: bool = False):
         await ffEvent.wait()
         await ffLock.acquire()
 
-        # ── 6. Encode quality-by-quality, all episodes per quality ────────────
-        btns = []  # Inline buttons added to post_msg
+        # 6. Encode quality-by-quality, all episodes per quality
+        btns = []
 
         for qual in Var.QUALS:
-            qual_file_ids = []   # FILE_STORE message IDs for this quality
+            qual_file_ids = []
 
             for ep_idx, video_path in enumerate(video_files, 1):
                 ep_fname = ospath.basename(video_path)
 
-                # Parse episode number from individual filename
                 try:
                     ep_pdata = anitopy_parse(ep_fname)
                     raw_ep   = ep_pdata.get('episode_number')
-                    # Handle list (multiple matches) or range string
                     if isinstance(raw_ep, list):
                         raw_ep = raw_ep[0]
                     if raw_ep and '-' in str(raw_ep):
@@ -539,20 +505,17 @@ async def get_batch_animes(name: str, torrent: str, force: bool = False):
                 except Exception:
                     ep_no = str(ep_idx).zfill(2)
 
-                # Progress update
                 await editMessage(
                     stat_msg,
                     f"‣ <b>Batch [{qual}p] :</b> <b><i>{display_name}</i></b>\n\n"
                     f"<i>Encoding Episode {ep_no}  ({ep_idx}/{total_eps})...</i>"
                 )
 
-                # Generate filename for this episode
                 filename = await aniInfo.get_batch_upname(qual, ep_no, ep_fname)
                 if not filename:
                     filename = f"[{qual}p] EP{ep_no} {display_name} {Var.BRAND_UNAME}.mkv"
                     LOGS.warning(f"get_batch_upname returned None for {qual}p EP{ep_no}, using fallback")
 
-                # Encode
                 encode_start = time()
                 try:
                     out_path = await FFEncoder(
@@ -583,7 +546,6 @@ async def get_batch_animes(name: str, torrent: str, force: bool = False):
                     "info"
                 )
 
-                # Upload encoded episode to FILE_STORE
                 await editMessage(
                     stat_msg,
                     f"‣ <b>Batch [{qual}p] :</b> <b><i>{display_name}</i></b>\n\n"
@@ -603,14 +565,12 @@ async def get_batch_animes(name: str, torrent: str, force: bool = False):
                         f"Batch upload error [{qual}p] EP{ep_no}: {e}", "error"
                     )
 
-            # No files uploaded for this quality → skip button
             if not qual_file_ids:
                 await rep.report(
                     f"No files uploaded for {qual}p — skipping button", "warning"
                 )
                 continue
 
-            # Save batch file IDs to DB
             await db.saveBatchFiles(
                 ani_id        = ani_id,
                 qual          = qual,
@@ -621,7 +581,6 @@ async def get_batch_animes(name: str, torrent: str, force: bool = False):
                 original_name = name,
             )
 
-            # Add batch button to channel post
             actual_count = len(qual_file_ids)
             btn_label    = f"📦 {btn_formatter.get(qual, qual+'p')} — Ep 1-{actual_count}"
             cb_data      = f"batch_dl_{ani_id}_{qual}"
@@ -638,6 +597,61 @@ async def get_batch_animes(name: str, torrent: str, force: bool = False):
                     InlineKeyboardMarkup(btns)
                 )
             except Exception:
-                pass **...**
+                pass
 
-_This response is too long to display in full._
+            await rep.report(
+                f"✅ Quality {qual}p complete — {actual_count} episode(s) saved",
+                "info"
+            )
+
+        # 7. Release lock and cleanup
+        ffLock.release()
+        await stat_msg.delete()
+
+        removed_dirs = set()
+        for vf in video_files:
+            try:
+                if ospath.exists(vf):
+                    await aioremove(vf)
+                parent = ospath.dirname(vf)
+                if (
+                    parent not in removed_dirs
+                    and ospath.isdir(parent)
+                    and ospath.abspath(parent) != ospath.abspath("./downloads")
+                ):
+                    await aiormtree(parent)
+                    removed_dirs.add(parent)
+            except Exception:
+                pass
+
+        if ani_id is not None:
+            ani_cache['completed'].add(ani_id)
+            ani_cache['ongoing'].discard(ani_id)
+
+        await rep.report(
+            f"✅ Batch processing complete!\n\n"
+            f"‣ Anime: {display_name}\n"
+            f"‣ Episodes: {total_eps}\n"
+            f"‣ Qualities: {', '.join(Var.QUALS)}",
+            "info"
+        )
+
+    except Exception:
+        await rep.report(format_exc(), "error")
+        try:
+            ffLock.release()
+        except Exception:
+            pass
+
+
+# ─── Extra utils (backup copy) ────────────────────────────────────────────────
+
+async def extra_utils(msg_id, chat_id=None):
+    target_chat = chat_id or Var.FILE_STORE
+    msg = await bot.get_messages(target_chat, message_ids=msg_id)
+    if Var.BACKUP_CHANNEL and str(Var.BACKUP_CHANNEL).strip():
+        for cid in str(Var.BACKUP_CHANNEL).split():
+            try:
+                await msg.copy(int(cid))
+            except Exception as e:
+                LOGS.error(f"Backup copy failed for {cid}: {e}")
