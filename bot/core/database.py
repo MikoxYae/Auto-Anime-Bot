@@ -290,6 +290,48 @@ class MongoDB:
         doc = await self.__botsettings.find_one({'_id': 'batch_mode'})
         return doc['value'] if doc else None
 
+    # ─── Sticker Methods ──────────────────────────────────────────────────────
+
+    async def getStickerMain(self) -> str | None:
+        doc = await self.__botsettings.find_one({'_id': 'sticker_main'})
+        return doc['value'] if doc else None
+
+    async def setStickerMain(self, file_id: str) -> None:
+        await self.__botsettings.update_one(
+            {'_id': 'sticker_main'},
+            {'$set': {'value': file_id}},
+            upsert=True
+        )
+
+    async def delStickerMain(self) -> None:
+        # Store 'REMOVED' so auto_animes knows not to send any sticker
+        # (deleting the document would cause fallback to the default sticker)
+        await self.__botsettings.update_one(
+            {'_id': 'sticker_main'},
+            {'$set': {'value': 'REMOVED'}},
+            upsert=True
+        )
+
+    async def getStickerConnect(self) -> str | None:
+        doc = await self.__botsettings.find_one({'_id': 'sticker_connect'})
+        return doc['value'] if doc else None
+
+    async def setStickerConnect(self, file_id: str) -> None:
+        await self.__botsettings.update_one(
+            {'_id': 'sticker_connect'},
+            {'$set': {'value': file_id}},
+            upsert=True
+        )
+
+    async def delStickerConnect(self) -> None:
+        # Store 'REMOVED' so auto_animes knows not to send any sticker
+        # (deleting the document would cause fallback to the default sticker)
+        await self.__botsettings.update_one(
+            {'_id': 'sticker_connect'},
+            {'$set': {'value': 'REMOVED'}},
+            upsert=True
+        )
+
 
 _mongo_uri = os.environ.get("MONGO_URI", "")
 db = MongoDB(_mongo_uri, "FZAutoAnimes")
