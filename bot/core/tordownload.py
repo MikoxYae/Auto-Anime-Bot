@@ -18,7 +18,6 @@ from bot.core.func_utils import handle_logs, editMessage, convertBytes, convertT
 
 VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.webm', '.flv', '.m4v'}
 
-# ─── Batch sticker IDs ────────────────────────────────────────────────────────
 BATCH_STICKER_OPEN  = "CAACAgUAAxkBAAEQy2JpvmjZGXHw5ed2_jAdwFhKTBW6dQAC4BMAAp6PIFcLAAGEEdQGq4s6BA"
 BATCH_STICKER_CLOSE = "CAACAgUAAxkBAAEQy2Rpvmj9bMfTK2D61weCXOcBAAHaHM4AAxMAAhJBKVd3ycv655tyYToE"
 
@@ -26,7 +25,6 @@ BATCH_STICKER_CLOSE = "CAACAgUAAxkBAAEQy2Rpvmj9bMfTK2D61weCXOcBAAHaHM4AAxMAAhJBK
 # ─── Video helpers ────────────────────────────────────────────────────────────
 
 def _find_video_in_dir(directory: str) -> str | None:
-    """Find the single largest video file in a directory (for normal mode)."""
     best      = None
     best_size = -1
     for root, dirs, files in walk(directory):
@@ -45,11 +43,6 @@ def _find_video_in_dir(directory: str) -> str | None:
 
 
 def find_all_videos_in_dir(directory: str) -> list[str]:
-    """
-    Find ALL video files inside a directory tree.
-    Returns them sorted by episode number (anitopy), falling back to natural sort.
-    Used for batch processing.
-    """
     videos = []
     for root, dirs, files in walk(directory):
         for fname in files:
@@ -63,12 +56,10 @@ def find_all_videos_in_dir(directory: str) -> list[str]:
             pdata = anitopy_parse(fname)
             ep    = pdata.get('episode_number')
             if ep:
-                # Handle ranges like '01-12' — take first number
                 ep_str = str(ep).split('-')[0].strip()
                 return (0, float(ep_str))
         except Exception:
             pass
-        # Natural sort fallback (pads numbers so '10' > '9')
         return (1, re.sub(r'(\d+)', lambda m: m.group().zfill(10), fname.lower()))
 
     return sorted(videos, key=_sort_key)
@@ -77,20 +68,14 @@ def find_all_videos_in_dir(directory: str) -> list[str]:
 # ─── Torrent activity check ───────────────────────────────────────────────────
 
 def _hex_to_url_encoded(hex_str: str) -> str:
-    """Convert 40-char hex infohash to URL-encoded 20-byte binary string."""
     raw = bytes.fromhex(hex_str)
     return quote_from_bytes(raw)
 
 
 def _parse_scrape_seeders(data: bytes, info_hash_bin: bytes) -> int:
-    """
-    Extract seeder count from a bencoded tracker scrape response.
-    Looks for the info_hash block and reads the 'complete' integer.
-    """
     try:
         idx = data.find(info_hash_bin)
         if idx == -1:
-            # Some trackers omit binary hash — try regex on full response
             m = re.search(rb'd8:completei(\d+)e', data)
             if m:
                 return int(m.group(1))
@@ -105,10 +90,6 @@ def _parse_scrape_seeders(data: bytes, info_hash_bin: bytes) -> int:
 
 
 def _extract_magnet_parts(magnet: str) -> tuple[str, list[str]]:
-    """
-    Parse a magnet URI.
-    Returns (infohash_hex, [tracker_url, ...])
-    """
     infohash = ""
     trackers = []
 
@@ -117,9 +98,7 @@ def _extract_magnet_parts(magnet: str) -> tuple[str, list[str]]:
             part = part[8:]
         if part.startswith("xt=urn:btih:"):
             ih = part[len("xt=urn:btih:"):]
-            # Could be hex (40 chars) or base32 (32 chars)
             if len(ih) == 32:
-                # base32 → hex
                 import base64
                 try:
                     infohash = base64.b32decode(ih.upper()).hex()
@@ -134,15 +113,7 @@ def _extract_magnet_parts(magnet: str) -> tuple[str, list[str]]:
     return infohash, trackers
 
 
-async def _check_http_tracker(
-    tracker_url: str,
-    infohash_hex: str,
-    timeout: int = 8,
-) -> int:
-    """
-    Query an HTTP tracker's scrape endpoint.
-    Returns seeder count (0 if unavailable or error).
-    """
+async def _check_http_tracker(tracker_url: str, infohash_hex: str, timeout: int = 8) -> int:
     try:
         parsed  = urlparse(tracker_url)
         base    = f"{parsed.scheme}://{parsed.netloc}"
@@ -153,34 +124,22 @@ async def _check_http_tracker(
         async with ClientSession(timeout=ClientTimeout(total=timeout)) as sess:
             async with sess.get(url) as resp:
                 if resp.status == 200:
-                    data            = await resp.read()
-                    info_hash_bin   = bytes.fromhex(infohash_hex)
+                    data          = await resp.read()
+                    info_hash_bin = bytes.fromhex(infohash_hex)
                     return _parse_scrape_seeders(data, info_hash_bin)
     except Exception:
         pass
     return 0
 
 
-async def _check_udp_tracker(
-    tracker_url: str,
-    infohash_hex: str,
-    timeout: int = 8,
-) -> int:
-    """
-    Query a UDP tracker using the UDP tracker protocol.
-    Returns seeder count (0 if unavailable or error).
-    """
+async def _check_udp_tracker(tracker_url: str, infohash_hex: str, timeout: int = 8) -> int:
     try:
         parsed = urlparse(tracker_url)
         host   = parsed.hostname
         port   = parsed.port or 6969
+        ip     = socket.gethostbyname(host)
+        loop   = __import__('asyncio').get_event_loop()
 
-        # Resolve host
-        ip = socket.gethostbyname(host)
-
-        loop = __import__('asyncio').get_event_loop()
-
-        # Step 1: Connect request
         conn_req = struct.pack('>QII', 0x41727101980, 0, __import__('random').randint(0, 0xFFFFFFFF))
 
         transport, protocol = await loop.create_datagram_endpoint(
@@ -200,16 +159,14 @@ async def _check_udp_tracker(
 
 
 class _UDPTrackerProtocol(__import__('asyncio').DatagramProtocol):
-    """Minimal UDP tracker protocol for scrape."""
-
     def __init__(self, conn_req: bytes, infohash_hex: str, timeout: int):
-        self._conn_req      = conn_req
-        self._infohash_hex  = infohash_hex
-        self._timeout       = timeout
-        self._conn_id       = None
-        self._transport     = None
+        self._conn_req     = conn_req
+        self._infohash_hex = infohash_hex
+        self._timeout      = timeout
+        self._conn_id      = None
+        self._transport    = None
         import asyncio
-        self.result         = asyncio.get_event_loop().create_future()
+        self.result        = asyncio.get_event_loop().create_future()
 
     def connection_made(self, transport):
         self._transport = transport
@@ -219,21 +176,14 @@ class _UDPTrackerProtocol(__import__('asyncio').DatagramProtocol):
         try:
             if len(data) < 16:
                 return
-
             action = struct.unpack('>I', data[:4])[0]
-
-            # Connect response
             if action == 0 and self._conn_id is None:
                 self._conn_id = data[8:16]
                 tid           = __import__('random').randint(0, 0xFFFFFFFF)
                 ih_bin        = bytes.fromhex(self._infohash_hex)
-                # Scrape request: action=2
-                scrape_req = self._conn_id + struct.pack('>II', 2, tid) + ih_bin
+                scrape_req    = self._conn_id + struct.pack('>II', 2, tid) + ih_bin
                 self._transport.sendto(scrape_req)
-
-            # Scrape response: action=2
             elif action == 2:
-                # seeders at offset 8, completed at 12, leechers at 16
                 if len(data) >= 20:
                     seeders = struct.unpack('>I', data[8:12])[0]
                     if not self.result.done():
@@ -252,27 +202,6 @@ class _UDPTrackerProtocol(__import__('asyncio').DatagramProtocol):
 
 
 async def check_torrent_active(magnet_or_url: str, min_seeders: int = 1, timeout: int = 15) -> bool:
-    """
-    Check if a magnet link or torrent URL has active seeders.
-
-    For magnet links:
-      - Parses tracker list from the URI
-      - Queries HTTP trackers via scrape protocol
-      - Queries UDP trackers via UDP tracker protocol
-      - Returns True if ANY tracker reports >= min_seeders
-
-    For .torrent URLs:
-      - Falls back to True (can't scrape without downloading)
-      - Bot will attempt download; dead torrents will timeout naturally
-
-    Args:
-        magnet_or_url: Magnet URI or .torrent URL
-        min_seeders:   Minimum number of seeders required (default: 1)
-        timeout:       Seconds to wait per tracker (default: 15)
-
-    Returns:
-        True if active, False if no seeders found on any tracker
-    """
     if not magnet_or_url.startswith("magnet:"):
         LOGS.info("Non-magnet torrent URL — skipping activity check, attempting download")
         return True
@@ -313,7 +242,6 @@ async def check_torrent_active(magnet_or_url: str, min_seeders: int = 1, timeout
 # ─── Download helpers ─────────────────────────────────────────────────────────
 
 def _get_dir_size(path: str) -> int:
-    """Return total bytes of all files under path (including subdirs)."""
     total = 0
     try:
         for root, _, files in walk(path):
@@ -328,49 +256,48 @@ def _get_dir_size(path: str) -> int:
 
 
 def _apply_fast_settings(torp) -> None:
-    """
-    Tune the libtorrent session inside a torrentp TorrentDownloader for
-    maximum download throughput.  Silently ignored if the attribute layout
-    doesn't match (different torrentp versions).
-    """
+    fast_settings = {
+        'connections_limit':      500,
+        'active_downloads':       10,
+        'active_seeds':           5,
+        'upload_rate_limit':      0,
+        'download_rate_limit':    0,
+        'unchoke_slots_limit':    8,
+        'request_queue_time':     3,
+        'max_out_request_queue':  1500,
+        'whole_pieces_threshold': 20,
+        'peer_connect_timeout':   4,
+        'inactivity_timeout':     60,
+    }
+
+    ses = None
+    for attr in ('session', '_session', 'ses', '_ses', 'lt_session', '_lt_session'):
+        ses = getattr(torp, attr, None)
+        if ses is not None:
+            break
+
+    if ses is None:
+        for attr in vars(torp):
+            obj = getattr(torp, attr, None)
+            if obj is not None and callable(getattr(obj, 'apply_settings', None)):
+                ses = obj
+                break
+
+    if ses is None:
+        LOGS.warning("libtorrent session not found — fast settings not applied (speed may be limited)")
+        return
+
     try:
-        ses = getattr(torp, 'session', None) or getattr(torp, '_session', None)
-        if ses is None:
-            return
-        ses.apply_settings({
-            'connections_limit':          500,
-            'active_downloads':           10,
-            'active_seeds':               5,
-            'upload_rate_limit':          0,
-            'download_rate_limit':        0,
-            'unchoke_slots_limit':        8,
-            'request_queue_time':         3,
-            'max_out_request_queue':      1500,
-            'whole_pieces_threshold':     20,
-            'peer_connect_timeout':       4,
-            'inactivity_timeout':         60,
-        })
-        LOGS.info("libtorrent fast settings applied")
+        ses.apply_settings(fast_settings)
+        LOGS.info("libtorrent fast settings applied successfully")
     except Exception as e:
         LOGS.warning(f"Could not apply libtorrent fast settings: {e}")
 
 
-async def _progress_monitor(
-    torp,
-    stat_msg,
-    name: str,
-    downdir: str,
-    interval: int = 30,
-) -> None:
-    """
-    Background task: updates stat_msg with download progress every `interval` seconds.
-    Tries the libtorrent handle first (accurate total + speed), falls back to
-    scanning the download directory for bytes written.
-    """
-    start_time  = time()
-    last_bytes  = 0
+async def _progress_monitor(torp, stat_msg, name: str, downdir: str, interval: int = 30) -> None:
+    start_time = time()
+    last_bytes = 0
 
-    # give torrentp a moment to set up the handle
     await asleep(5)
 
     while True:
@@ -378,23 +305,22 @@ async def _progress_monitor(
         try:
             elapsed = time() - start_time
 
-            # ── Try libtorrent handle ─────────────────────────────────────────
             handle = (
                 getattr(torp, 'handle',  None)
                 or getattr(torp, '_handle', None)
             )
 
             if handle is not None and hasattr(handle, 'status'):
-                s           = handle.status()
-                downloaded  = int(s.total_wanted_done)
-                total       = int(s.total_wanted)
-                dl_rate     = int(s.download_rate)
+                s          = handle.status()
+                downloaded = int(s.total_wanted_done)
+                total      = int(s.total_wanted)
+                dl_rate    = int(s.download_rate)
 
-                speed_str   = f"{convertBytes(dl_rate)}/s" if dl_rate > 0 else "—"
-                eta_secs    = ((total - downloaded) / dl_rate) if dl_rate > 0 else 0
-                eta_str     = convertTime(eta_secs) if eta_secs > 0 else "—"
-                percent     = round((downloaded / total) * 100, 1) if total > 0 else 0
-                bar         = floor(percent / 8) * "█" + (12 - floor(percent / 8)) * "▒"
+                speed_str  = f"{convertBytes(dl_rate)}/s" if dl_rate > 0 else "—"
+                eta_secs   = ((total - downloaded) / dl_rate) if dl_rate > 0 else 0
+                eta_str    = convertTime(eta_secs) if eta_secs > 0 else "—"
+                percent    = round((downloaded / total) * 100, 1) if total > 0 else 0
+                bar        = floor(percent / 8) * "█" + (12 - floor(percent / 8)) * "▒"
 
                 progress_str = (
                     f"‣ <b>Anime Name :</b> <b><i>{name}</i></b>\n\n"
@@ -407,13 +333,12 @@ async def _progress_monitor(
                 )
 
             else:
-                # ── Fallback: measure directory growth ───────────────────────
-                cur_bytes   = _get_dir_size(downdir)
-                delta       = cur_bytes - last_bytes
-                speed       = delta / interval if interval > 0 else 0
-                last_bytes  = cur_bytes
+                cur_bytes  = _get_dir_size(downdir)
+                delta      = cur_bytes - last_bytes
+                speed      = delta / interval if interval > 0 else 0
+                last_bytes = cur_bytes
 
-                speed_str   = f"{convertBytes(speed)}/s" if speed > 0 else "—"
+                speed_str  = f"{convertBytes(speed)}/s" if speed > 0 else "—"
 
                 progress_str = (
                     f"‣ <b>Anime Name :</b> <b><i>{name}</i></b>\n\n"
@@ -479,18 +404,13 @@ class TorDownloader:
         after       = set(listdir(self.__downdir))
         new_entries = after - before
 
-        # If the folder pre-existed (leftover from a prior attempt), new_entries will
-        # be empty even though the download succeeded. Ask the libtorrent handle for
-        # the actual on-disk name and check if it's already there.
         if not new_entries:
             handle = getattr(torp, 'handle', None) or getattr(torp, '_handle', None)
             if handle:
                 try:
                     actual_name = handle.name()
                     if actual_name and actual_name in after:
-                        LOGS.info(
-                            f"Pre-existing folder detected as completed download: {actual_name}"
-                        )
+                        LOGS.info(f"Pre-existing folder detected as completed download: {actual_name}")
                         new_entries = {actual_name}
                 except Exception:
                     pass
@@ -515,11 +435,6 @@ class TorDownloader:
 
     @handle_logs
     async def download_batch(self, torrent, name=None, stat_msg=None) -> list[str]:
-        """
-        Download a batch torrent and return ALL video files sorted by episode.
-        Used exclusively for batch mode processing.
-        Returns: sorted list of video file paths
-        """
         before = set(listdir(self.__downdir)) if ospath.exists(self.__downdir) else set()
 
         torp = None
@@ -559,16 +474,13 @@ class TorDownloader:
         after       = set(listdir(self.__downdir))
         new_entries = after - before
 
-        # Same pre-existing folder recovery as in download()
         if not new_entries:
             handle = getattr(torp, 'handle', None) or getattr(torp, '_handle', None)
             if handle:
                 try:
                     actual_name = handle.name()
                     if actual_name and actual_name in after:
-                        LOGS.info(
-                            f"Batch: pre-existing folder detected as completed download: {actual_name}"
-                        )
+                        LOGS.info(f"Batch: pre-existing folder detected as completed download: {actual_name}")
                         new_entries = {actual_name}
                 except Exception:
                     pass
@@ -585,7 +497,6 @@ class TorDownloader:
             LOGS.info(f"Batch download: found {len(videos)} video file(s) in {entry_path}")
             return videos
 
-        # Single file — treat as a 1-episode batch
         ext = ospath.splitext(entry_path)[1].lower()
         if ext in VIDEO_EXTS:
             LOGS.info(f"Batch download: single video file {entry_path}")
