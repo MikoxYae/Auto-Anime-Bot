@@ -223,47 +223,59 @@ async def get_animes(name, torrent, force=False):
             encode_sem   = Semaphore(2)
 
             async def encode_and_queue(qual, turn_index):
-                filename = await aniInfo.get_upname(qual)
-                if not filename:
-                    safe_name = name.replace('/', '_').replace('\\', '_')
-                    filename  = f"[{qual}p] {safe_name}.mkv"
-                    LOGS.warning(f"get_upname returned None for {qual}p, using fallback: {filename}")
+                # Always put to upload_queue no matter what — if this is skipped,
+                # upload_worker hangs forever and ffLock is never released (deadlock).
+                filename = None
+                out_path = None
+                try:
+                    filename = await aniInfo.get_upname(qual)
+                    if not filename:
+                        safe_name = name.replace('/', '_').replace('\\', '_')
+                        filename  = f"[{qual}p] {safe_name}.mkv"
+                        LOGS.warning(f"get_upname returned None for {qual}p, using fallback: {filename}")
 
-                async with encode_sem:
-                    await rep.report(f"Starting Encode [{qual}p]...", "info")
-                    encode_start = time()
-                    try:
-                        out_path = await FFEncoder(
-                            stat_msg, dl, filename, qual,
-                            turn_index  = turn_index,
-                            total_quals = total_quals
-                        ).start_encode()
-                    except Exception as e:
-                        await rep.report(f"Encode Error [{qual}p]: {e}", "error")
-                        out_path = None
+                    async with encode_sem:
+                        await rep.report(f"Starting Encode [{qual}p]...", "info")
+                        encode_start = time()
+                        try:
+                            out_path = await FFEncoder(
+                                stat_msg, dl, filename, qual,
+                                turn_index  = turn_index,
+                                total_quals = total_quals
+                            ).start_encode()
+                        except Exception as e:
+                            await rep.report(f"Encode Error [{qual}p]: {e}", "error")
+                            out_path = None
 
-                    time_taken   = convertTime(time() - encode_start)
-                    titles       = aniInfo.adata.get('title') or {}
-                    display_name = titles.get('english') or titles.get('romaji') or name
+                        time_taken   = convertTime(time() - encode_start)
+                        titles       = aniInfo.adata.get('title') or {}
+                        display_name = titles.get('english') or titles.get('romaji') or name
 
-                    if out_path:
-                        await rep.report(
-                            f"✅ Encode Complete!\n\n"
-                            f"‣ Anime: {display_name}\n"
-                            f"‣ Quality: {qual}p\n"
-                            f"‣ Time Taken: {time_taken}",
-                            "info"
-                        )
-                    else:
-                        await rep.report(
-                            f"❌ Encode Failed!\n\n"
-                            f"‣ Anime: {display_name}\n"
-                            f"‣ Quality: {qual}p\n"
-                            f"‣ Time Taken: {time_taken}",
-                            "error"
-                        )
-
-                await upload_queue.put((qual, filename, out_path))
+                        if out_path:
+                            await rep.report(
+                                f"✅ Encode Complete!\n\n"
+                                f"‣ Anime: {display_name}\n"
+                                f"‣ Quality: {qual}p\n"
+                                f"‣ Time Taken: {time_taken}",
+                                "info"
+                            )
+                        else:
+                            await rep.report(
+                                f"❌ Encode Failed!\n\n"
+                                f"‣ Anime: {display_name}\n"
+                                f"‣ Quality: {qual}p\n"
+                                f"‣ Time Taken: {time_taken}",
+                                "error"
+                            )
+                except Exception as e:
+                    await rep.report(f"Unexpected error in encode_and_queue [{qual}p]: {e}", "error")
+                    out_path = None
+                    if not filename:
+                        safe_name = name.replace('/', '_').replace('\\', '_')
+                        filename  = f"[{qual}p] {safe_name}.mkv"
+                finally:
+                    # Guaranteed: always unblock upload_worker for this quality slot
+                    await upload_queue.put((qual, filename, out_path))
 
             async def upload_worker():
                 bot_username = (await bot.get_me()).username
@@ -466,7 +478,7 @@ async def get_batch_animes(name: str, torrent: str, force: bool = False):
         except Exception:
             updated_caption = initial_caption
 
-        # Queue and acquire ffLock
+        # 6. Queue and acquire ffLock
         post_id                  = post_msg.id
         ffEvent                  = Event()
         ff_queued[post_id]       = ffEvent
@@ -485,7 +497,7 @@ async def get_batch_animes(name: str, torrent: str, force: bool = False):
         await ffEvent.wait()
         await ffLock.acquire()
 
-        # 6. Encode quality-by-quality, all episodes per quality
+        # 7. Encode quality-by-quality, all episodes per quality
         btns = []
 
         for qual in Var.QUALS:
@@ -604,7 +616,7 @@ async def get_batch_animes(name: str, torrent: str, force: bool = False):
                 "info"
             )
 
-        # 7. Release lock and cleanup
+        # 8. Release lock and cleanup
         ffLock.release()
         await stat_msg.delete()
 
